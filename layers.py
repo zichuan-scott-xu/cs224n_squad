@@ -220,3 +220,28 @@ class BiDAFOutput(nn.Module):
         log_p2 = masked_softmax(logits_2.squeeze(), mask, log_softmax=True)
 
         return log_p1, log_p2
+
+
+class LSTMEncoder(nn.Module):
+    def __init__(self, embedding_dim, hidden_dim):
+        super().__init__()
+        self.embedding_dim = embedding_dim
+        self.hidden_dim = hidden_dim
+        self.lstm = nn.LSTM(self.embedding_dim, self.hidden_dim, batch_first=True)
+
+    def forward(self, x, lengths):
+        orig_len = x.size(1)
+
+        lengths, sort_idx = lengths.sort(0, descending=True)
+        x = x[sort_idx]
+        x = pack_padded_sequence(x, lengths.cpu(), batch_first=True)
+        x, _ = self.lstm(x)
+
+        x, _ = pad_packed_sequence(x, batch_first=True, total_length=orig_len)
+        _, unsort_idx = sort_idx.sort(0)
+        x = x[unsort_idx]
+
+        # TODO: determine whether or not we need dropout here 
+        # (I guess no since we can do it outside)
+
+        return x
