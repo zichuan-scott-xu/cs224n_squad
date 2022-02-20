@@ -4,6 +4,8 @@ Author:
     Chris Chute (chute@stanford.edu)
 """
 
+from unicodedata import bidirectional
+from numpy import argmax
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -220,3 +222,87 @@ class BiDAFOutput(nn.Module):
         log_p2 = masked_softmax(logits_2.squeeze(), mask, log_softmax=True)
 
         return log_p1, log_p2
+
+
+class LSTMEncoder(nn.Module):
+    def __init__(self, embedding_dim, hidden_dim):
+        super().__init__()
+        self.embedding_dim = embedding_dim
+        self.hidden_dim = hidden_dim
+        self.lstm = nn.LSTM(self.embedding_dim, self.hidden_dim, batch_first=True)
+
+    def forward(self, x, lengths):
+        orig_len = x.size(1)
+
+        lengths, sort_idx = lengths.sort(0, descending=True)
+        x = x[sort_idx]
+        x = pack_padded_sequence(x, lengths.cpu(), batch_first=True)
+        x, _ = self.lstm(x)
+
+        x, _ = pad_packed_sequence(x, batch_first=True, total_length=orig_len)
+        _, unsort_idx = sort_idx.sort(0)
+        x = x[unsort_idx]
+
+        # TODO: determine whether or not we need dropout here 
+        # (I guess no since we can do it outside)
+
+        return x
+
+class DynamicDecoder(nn.Module):
+    def __init__(self, hidden_dim, pooling_size, max_iter_num):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.decoder = nn.LSTMCell(hidden_dim * 4, hidden_dim, bidirectional=False)
+        self.max_iter_num = max_iter_num
+        self.start = HighMaxoutNetwork(self.hidden_dim, pooling_size)
+        self.end = HighMaxoutNetwork(self.hidden_dim, pooling_size)
+
+    def forward(self, U, true_answer):
+        b, m, l = U.size()
+        true_start = true_answer[:, 0]
+        true_end = true_answer[:, 1]
+        prev_start = 0
+        prev_end = m - 1
+        h = torch.zeros((b, l))
+        for _ in range(self.max_iter_num):
+            prev_start = self.start.forward(U, h, prev_start, prev_end).argmax(-1)
+            prev_end = self.end.forward(U, h, prev_start, prev_end).argmax(-1)
+            loss = self.start.loss(prev_start, true_start) + self.end.loss(prev_end, true_end)
+
+        return loss, prev_start, prev_end
+        
+class HighMaxoutNetwork(nn.Module):
+    def __init__(self, hidden_dim, pooling_size):
+        super().__init__()
+        self.embedding_dim = hidden_dim
+        self.r = nn.Linear(hidden_dim * 5, hidden_dim, bias=False)
+        self.m1 = nn.Linear(hidden_dim * 3, pooling_size * hidden_dim)
+        self.m2 = nn.Linear(hidden_dim, pooling_size * hidden_dim)
+        self.final = nn.Linear(hidden_dim * 2, pooling_size)
+        self.loss = nn.CrossEntropyLoss()
+
+    def forward(self, U, cur_h, prev_start, prev_end):
+        # U is of shape b, m, 2l, where b is batch size, 
+        # m is number of words in the document,
+        # and l is the hidden_dim.
+        _, m, _ = U.size()
+        everyone = torch.cat((cur_h, U[:,prev_start, :], U[:, prev_end, :]), -1)
+        # everyone is now of shape b, 5l
+        r = F.tanh(self.r(everyone))
+        # r is now of shape b, l
+        r_dup = r.unsqueeze(1).repeat(1, m, 1)
+        # r_dup is now of shape b, m, l
+        m1 = self.m1(torch.cat((U, r_dup), -1))
+        # b, m, 3l times 3l, p*l = b, m, p*l. We would like to take max
+        m1 = m1.view(-1, self.pooling_size, self.hidden_dim).max(2)
+        # now m1 is b, m, l
+        m2 = self.m2(m1)
+        # m2 is now b, m, p*l, and we would like to take max
+        m2 = m2.view(-1, self.pooling_size, self.hidden_dim).max(2)
+        # m2 is now b, m, l
+        alpha = self.final(torch.cat((m1, m2), -1))
+        # alpha is now b, m, p, and we would like to take max
+        alpha = alpha.max(-1)
+        # Computation is done.
+
+        return alpha
