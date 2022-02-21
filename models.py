@@ -87,6 +87,7 @@ class CoAttention(nn.Module):
         self.dropout = nn.Dropout(self.drop_prob)
         self.sentinel_c = nn.Parameter(torch.rand(self.hidden_size,))
         self.sentinel_q = nn.Parameter(torch.rand(self.hidden_size,))
+        self.fusion_lstm = layers.FusionBiLSTM(self.hidden_size)
 
     
     '''
@@ -117,6 +118,23 @@ class CoAttention(nn.Module):
 
         D = torch.cat((D, sentinel_c), 1) # (B, m+1, l)
         Q = torch.cat((Q, sentinel_q), 1) # (B, n+1, l)
-        print("D shape: ", D.shape)
-        print("Q shape: ", Q.shape)
+
+        # Coattention Method
+        D_T = torch.transpose(D, 1, 2) # (B, l, m+1)
+        L = torch.bmm(Q, D_T) # (B, n+1, m+1)
+        A_Q = F.softmax(L, dim=1) # (B, n+1, m+1)
+        A_Q = A_Q.transpose(1, 2) # (B, m+1, n+1) for future matrix multiplication
+        A_D = F.softmax(L, dim=2) # (B, m+1, n+1)
+        C_Q = torch.bmm(D_T, A_Q) # (B, l, m+1) x (B, m+1, n+1) = (B, l, n+1)
+        Q_T = torch.transpose(Q, 1, 2) # (B, l, n+1)
+        Q_CQ = torch.cat([Q_T, C_Q], 1) # (B, 2l, n+1)
+        C_D = torch.bmm(Q_CQ, A_D) # (B, 2l, m+1)
+        C_D_T = C_D.transpose(1, 2) # (B, m+1, 2l)
+
+        # Fusion-BiLSTM
+        temporal_info = torch.cat((D, C_D_T), 2)  # (B, m+1, 3l)
+        temporal_info = temporal_info[:, :-1, :] # (B, m, 3l)
+        U = self.dropout(self.fusion_lstm(temporal_info, c_len)) # (B, m, al)
+
+        print("U shape: ", U.shape)
         return "Hi"

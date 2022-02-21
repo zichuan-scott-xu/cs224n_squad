@@ -248,6 +248,24 @@ class LSTMEncoder(nn.Module):
 
         return x
 
+class FusionBiLSTM(nn.Module):
+    def __init__(self, hidden_dim):
+        super(FusionBiLSTM, self).__init__()
+        self.fusion_bilstm = nn.LSTM(3 * hidden_dim, hidden_dim, 1, batch_first=True, bidirectional=True)
+
+    def forward(self, x, lengths):
+        orig_len = x.size(1)
+
+        lengths, sort_idx = lengths.sort(0, descending=True)
+        x = x[sort_idx]
+        x = pack_padded_sequence(x, lengths.cpu(), batch_first=True)
+        x, _ = self.fusion_bilstm(x)
+
+        x, _ = pad_packed_sequence(x, batch_first=True, total_length=orig_len)
+        _, unsort_idx = sort_idx.sort(0)
+        x = x[unsort_idx]
+        return x
+
 class DynamicDecoder(nn.Module):
     def __init__(self, hidden_dim, pooling_size, max_iter_num):
         super().__init__()
@@ -270,7 +288,7 @@ class DynamicDecoder(nn.Module):
             loss = self.start.loss(prev_start, true_start) + self.end.loss(prev_end, true_end)
 
         return loss, prev_start, prev_end
-        
+
 class HighMaxoutNetwork(nn.Module):
     def __init__(self, hidden_dim, pooling_size):
         super().__init__()
