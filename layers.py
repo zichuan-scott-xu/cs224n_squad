@@ -280,8 +280,8 @@ class DynamicDecoder(nn.Module):
         b, m, l = U.size()
         # true_start = self.true_answer[:, 0]
         # true_end = self.true_answer[:, 1]
-        prev_start = 0
-        prev_end = m - 1
+        prev_start = torch.zeros(b)
+        prev_end = torch.full((b, ), m-1)
         h = torch.zeros((b, l // 2))
         
         for _ in range(self.max_iter_num):
