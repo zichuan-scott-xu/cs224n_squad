@@ -309,8 +309,8 @@ class HighMaxoutNetwork(nn.Module):
         # and l is the hidden_dim.
         b, m, l = U.size()
         indices = torch.arange(0, b)
-        print(b, m, l)
-        print(U[:, prev_start, :].shape)
+        # print(b, m, l)
+        # print(U[:, prev_start, :].shape)
         everyone = torch.cat((cur_h, U[indices,prev_start, :], U[indices, prev_end, :]), -1)
         # everyone is now of shape b, 5l
         r = F.tanh(self.r(everyone))
@@ -319,9 +319,9 @@ class HighMaxoutNetwork(nn.Module):
         # r_dup is now of shape b, m, l
         m1 = self.m1(torch.cat((U, r_dup), -1))
         # b, m, 3l times 3l, p*l = b, m, p*l. We would like to take max
-        print("m1 has shape", m1.shape)
+        # print("m1 has shape", m1.shape)
         m1, _ = m1.reshape(b, m, self.pooling_size, self.hidden_dim).max(2)
-        print("m1 has shape", m1.shape)
+        # print("m1 has shape", m1.shape)
         # now m1 is b, m, l
         m2 = self.m2(m1)
         # m2 is now b, m, p*l, and we would like to take max
