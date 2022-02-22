@@ -267,32 +267,36 @@ class FusionBiLSTM(nn.Module):
         return x
 
 class DynamicDecoder(nn.Module):
-    def __init__(self, hidden_dim, pooling_size, max_iter_num):
+    def __init__(self, hidden_dim, pooling_size=10, max_iter_num=10):
         super().__init__()
+        # self.true_answer = true_answer
         self.hidden_dim = hidden_dim
-        self.decoder = nn.LSTMCell(hidden_dim * 4, hidden_dim, bidirectional=False)
+        self.decoder = nn.LSTM(hidden_dim * 4, hidden_dim, bidirectional=False)
         self.max_iter_num = max_iter_num
         self.start = HighMaxoutNetwork(self.hidden_dim, pooling_size)
         self.end = HighMaxoutNetwork(self.hidden_dim, pooling_size)
 
-    def forward(self, U, true_answer):
+    def forward(self, U):
         b, m, l = U.size()
-        true_start = true_answer[:, 0]
-        true_end = true_answer[:, 1]
+        # true_start = self.true_answer[:, 0]
+        # true_end = self.true_answer[:, 1]
         prev_start = 0
         prev_end = m - 1
-        h = torch.zeros((b, l))
+        h = torch.zeros((b, l // 2))
+        
         for _ in range(self.max_iter_num):
             prev_start = self.start.forward(U, h, prev_start, prev_end).argmax(-1)
+            print(prev_start.shape)
             prev_end = self.end.forward(U, h, prev_start, prev_end).argmax(-1)
-            loss = self.start.loss(prev_start, true_start) + self.end.loss(prev_end, true_end)
+            # loss = self.start.loss(prev_start, true_start) + self.end.loss(prev_end, true_end)
 
-        return loss, prev_start, prev_end
+        return prev_start, prev_end
 
 class HighMaxoutNetwork(nn.Module):
     def __init__(self, hidden_dim, pooling_size):
         super().__init__()
-        self.embedding_dim = hidden_dim
+        self.pooling_size = pooling_size
+        self.hidden_dim = hidden_dim
         self.r = nn.Linear(hidden_dim * 5, hidden_dim, bias=False)
         self.m1 = nn.Linear(hidden_dim * 3, pooling_size * hidden_dim)
         self.m2 = nn.Linear(hidden_dim, pooling_size * hidden_dim)
@@ -303,8 +307,11 @@ class HighMaxoutNetwork(nn.Module):
         # U is of shape b, m, 2l, where b is batch size, 
         # m is number of words in the document,
         # and l is the hidden_dim.
-        _, m, _ = U.size()
-        everyone = torch.cat((cur_h, U[:,prev_start, :], U[:, prev_end, :]), -1)
+        b, m, l = U.size()
+        indices = torch.arange(0, b)
+        print(b, m, l)
+        print(U[:, prev_start, :].shape)
+        everyone = torch.cat((cur_h, U[indices,prev_start, :], U[indices, prev_end, :]), -1)
         # everyone is now of shape b, 5l
         r = F.tanh(self.r(everyone))
         # r is now of shape b, l
@@ -312,15 +319,18 @@ class HighMaxoutNetwork(nn.Module):
         # r_dup is now of shape b, m, l
         m1 = self.m1(torch.cat((U, r_dup), -1))
         # b, m, 3l times 3l, p*l = b, m, p*l. We would like to take max
-        m1 = m1.view(-1, self.pooling_size, self.hidden_dim).max(2)
+        print("m1 has shape", m1.shape)
+        m1, _ = m1.reshape(b, m, self.pooling_size, self.hidden_dim).max(2)
+        print("m1 has shape", m1.shape)
         # now m1 is b, m, l
         m2 = self.m2(m1)
         # m2 is now b, m, p*l, and we would like to take max
-        m2 = m2.view(-1, self.pooling_size, self.hidden_dim).max(2)
+        m2, _ = m2.reshape(b, m, self.pooling_size, self.hidden_dim).max(2)
         # m2 is now b, m, l
         alpha = self.final(torch.cat((m1, m2), -1))
         # alpha is now b, m, p, and we would like to take max
-        alpha = alpha.max(-1)
+        # alpha = F.softmax(alpha, 1)
+        alpha, _ = alpha.max(-1)
         # Computation is done.
 
         return alpha

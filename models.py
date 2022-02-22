@@ -88,6 +88,7 @@ class CoAttention(nn.Module):
         self.sentinel_c = nn.Parameter(torch.rand(self.hidden_size,))
         self.sentinel_q = nn.Parameter(torch.rand(self.hidden_size,))
         self.fusion_lstm = layers.FusionBiLSTM(self.hidden_size)
+        self.decoder = layers.DynamicDecoder(hidden_size, pooling_size=10, max_iter_num=10)
 
     
     '''
@@ -134,7 +135,14 @@ class CoAttention(nn.Module):
         # Fusion-BiLSTM
         temporal_info = torch.cat((D, C_D_T), 2)  # (B, m+1, 3l)
         temporal_info = temporal_info[:, :-1, :] # (B, m, 3l)
-        U = self.dropout(self.fusion_lstm(temporal_info, c_len)) # (B, m, al)
+        U = self.dropout(self.fusion_lstm(temporal_info, c_len)) # (B, m, 2l)
+
+        pred_start, pred_end = self.decoder(U)
 
         print("U shape: ", U.shape)
+        # print("The loss is", loss)
+        print("The predicted start is at", pred_start)
+        print("the predicted end is at", pred_end)
         return "Hi"
+
+
