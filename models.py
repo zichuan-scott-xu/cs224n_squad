@@ -88,7 +88,7 @@ class CoAttention(nn.Module):
         self.sentinel_c = nn.Parameter(torch.rand(self.hidden_size,))
         self.sentinel_q = nn.Parameter(torch.rand(self.hidden_size,))
         self.fusion_lstm = layers.FusionBiLSTM(self.hidden_size)
-        self.decoder = layers.DynamicDecoder(hidden_size, pooling_size=10, max_iter_num=10)
+        self.decoder = layers.DynamicDecoder(hidden_size, pooling_size=4, max_iter_num=16)
 
     
     '''
