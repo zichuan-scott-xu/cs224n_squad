@@ -333,8 +333,8 @@ class HighMaxoutNetwork(nn.Module):
         alpha, _ = alpha.max(-1)
         
         alpha = alpha.view(-1, m)
-        print(alpha.size())
-        print(indices.size(), c_len.size())
+        # print(alpha.size())
+        # print(indices.size(), c_len.size())
         # alpha[indices, c_len:] = 0 # TODO: buggy
         for r in range(indices.shape[0]): # b
             alpha[r, indices[r]:] = 0
