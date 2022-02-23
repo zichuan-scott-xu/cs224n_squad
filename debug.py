@@ -5,6 +5,7 @@ Debug scripts to test the coattention model
 import models
 from util import SQuAD, collate_fn, torch_from_json
 import torch.utils.data as data
+import torch.nn.functional as F
 from args import get_train_args
 
 args = get_train_args()
@@ -27,6 +28,10 @@ train_loader = data.DataLoader(train_dataset,
                                    num_workers=0, # important to change it as 0, otherwise multiprocessing error
                                    collate_fn=collate_fn)
 for cw_idxs, cc_idxs, qw_idxs, qc_idxs, y1, y2, ids in train_loader:
-    print(model(cw_idxs, qw_idxs))
+    pred_start, pred_end, loss = model(cw_idxs, qw_idxs, y1, y2)
+    print(pred_start)
+    print(y1)
+    print(loss)
+    # loss = F
     break
     

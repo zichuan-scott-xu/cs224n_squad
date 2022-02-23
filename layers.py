@@ -275,22 +275,22 @@ class DynamicDecoder(nn.Module):
         self.max_iter_num = max_iter_num
         self.start = HighMaxoutNetwork(self.hidden_dim, pooling_size)
         self.end = HighMaxoutNetwork(self.hidden_dim, pooling_size)
+        self.loss = nn.CrossEntropyLoss()
 
-    def forward(self, U):
+    def forward(self, U, true_start, true_end, c_len):
         b, m, l = U.size()
-        # true_start = self.true_answer[:, 0]
-        # true_end = self.true_answer[:, 1]
-        prev_start = torch.zeros(b)
+        prev_start = torch.zeros(b, dtype=torch.long)
         prev_end = torch.full((b, ), m-1)
         h = torch.zeros((b, l // 2))
         
         for _ in range(self.max_iter_num):
-            prev_start = self.start.forward(U, h, prev_start, prev_end).argmax(-1)
-            print(prev_start.shape)
-            prev_end = self.end.forward(U, h, prev_start, prev_end).argmax(-1)
-            # loss = self.start.loss(prev_start, true_start) + self.end.loss(prev_end, true_end)
+            alpha_logit_start = self.start(U, h, prev_start, prev_end, c_len)
+            prev_start = alpha_logit_start.argmax(-1)
+            alpha_logit_end = self.end(U, h, prev_start, prev_end, c_len)
+            prev_end = alpha_logit_end.argmax(-1)
 
-        return prev_start, prev_end
+        loss = self.loss(alpha_logit_start, true_start) + self.loss(alpha_logit_end, true_end)
+        return prev_start, prev_end, loss
 
 class HighMaxoutNetwork(nn.Module):
     def __init__(self, hidden_dim, pooling_size):
@@ -301,9 +301,8 @@ class HighMaxoutNetwork(nn.Module):
         self.m1 = nn.Linear(hidden_dim * 3, pooling_size * hidden_dim)
         self.m2 = nn.Linear(hidden_dim, pooling_size * hidden_dim)
         self.final = nn.Linear(hidden_dim * 2, pooling_size)
-        self.loss = nn.CrossEntropyLoss()
 
-    def forward(self, U, cur_h, prev_start, prev_end):
+    def forward(self, U, cur_h, prev_start, prev_end, c_len):
         # U is of shape b, m, 2l, where b is batch size, 
         # m is number of words in the document,
         # and l is the hidden_dim.
@@ -311,7 +310,7 @@ class HighMaxoutNetwork(nn.Module):
         indices = torch.arange(0, b)
         # print(b, m, l)
         # print(U[:, prev_start, :].shape)
-        everyone = torch.cat((cur_h, U[indices,prev_start, :], U[indices, prev_end, :]), -1)
+        everyone = torch.cat((cur_h, U[indices, prev_start, :], U[indices, prev_end, :]), -1)
         # everyone is now of shape b, 5l
         r = F.tanh(self.r(everyone))
         # r is now of shape b, l
@@ -331,6 +330,14 @@ class HighMaxoutNetwork(nn.Module):
         # alpha is now b, m, p, and we would like to take max
         # alpha = F.softmax(alpha, 1)
         alpha, _ = alpha.max(-1)
+        
+        alpha = alpha.view(-1, m)
+        print(alpha.size())
+        print(indices.size(), c_len.size())
+        # alpha[indices, c_len:] = 0 # TODO: buggy
+        for r in range(indices.shape[0]): # b
+            alpha[r, indices[r]:] = 0
+        alpha_logits = F.log_softmax(alpha, 1)
         # Computation is done.
 
-        return alpha
+        return alpha_logits
