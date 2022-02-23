@@ -137,7 +137,7 @@ class CoAttention(nn.Module):
         temporal_info = temporal_info[:, :-1, :] # (B, m, 3l)
         U = self.dropout(self.fusion_lstm(temporal_info, c_len)) # (B, m, 2l)
 
-        pred_start, pred_end, loss = self.decoder(U, true_start, true_end, c_len)
+        pred_start, pred_end, loss = self.decoder(U, true_start, true_end, c_mask)
 
         return pred_start, pred_end, loss
 

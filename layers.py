@@ -279,16 +279,16 @@ class DynamicDecoder(nn.Module):
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
-    def forward(self, U, true_start, true_end, c_len):
+    def forward(self, U, true_start, true_end, c_mask):
         b, m, l = U.size()
         prev_start = torch.zeros(b, dtype=torch.long).to(self.device)
         prev_end = torch.full((b, ), m-1).to(self.device)
         h = torch.zeros((b, l // 2)).to(self.device)
         
         for _ in range(self.max_iter_num):
-            alpha_logit_start = self.start(U, h, prev_start, prev_end, c_len)
+            alpha_logit_start = self.start(U, h, prev_start, prev_end, c_mask)
             prev_start = alpha_logit_start.argmax(-1)
-            alpha_logit_end = self.end(U, h, prev_start, prev_end, c_len)
+            alpha_logit_end = self.end(U, h, prev_start, prev_end, c_mask)
             prev_end = alpha_logit_end.argmax(-1)
 
         loss = self.loss(alpha_logit_start, true_start) + self.loss(alpha_logit_end, true_end)
@@ -305,7 +305,7 @@ class HighMaxoutNetwork(nn.Module):
         self.final = nn.Linear(hidden_dim * 2, pooling_size)
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    def forward(self, U, cur_h, prev_start, prev_end, c_len):
+    def forward(self, U, cur_h, prev_start, prev_end, c_mask):
         # U is of shape b, m, 2l, where b is batch size, 
         # m is number of words in the document,
         # and l is the hidden_dim.
@@ -338,8 +338,10 @@ class HighMaxoutNetwork(nn.Module):
         # print(alpha.size())
         # print(indices.size(), c_len.size())
         # alpha[indices, c_len:] = 0 # TODO: buggy
-        for r in range(indices.shape[0]): # b
-            alpha[r, indices[r]:] = 0
+        # create a c_len mask matrix and do elementwise multiplication
+        alpha = alpha * c_mask
+        # for r in range(indices.shape[0]): # b
+            # alpha[r, c_len[r]:] = 0
         alpha_logits = F.log_softmax(alpha, 1)
         # Computation is done.
 
