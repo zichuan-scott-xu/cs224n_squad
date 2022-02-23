@@ -183,6 +183,7 @@ def evaluate(model, data_loader, device, eval_file, max_len, use_squad_v2):
             # y1, y2 = y1.to(device), y2.to(device)
             # loss = F.nll_loss(log_p1, y1) + F.nll_loss(log_p2, y2)
             loss_val = loss.item()
+            celoss_meter.update(loss_val, batch_size)
 
             # Get F1 and EM scores
             # p1, p2 = log_p1.exp(), log_p2.exp()
