@@ -301,13 +301,14 @@ class HighMaxoutNetwork(nn.Module):
         self.m1 = nn.Linear(hidden_dim * 3, pooling_size * hidden_dim)
         self.m2 = nn.Linear(hidden_dim, pooling_size * hidden_dim)
         self.final = nn.Linear(hidden_dim * 2, pooling_size)
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     def forward(self, U, cur_h, prev_start, prev_end, c_len):
         # U is of shape b, m, 2l, where b is batch size, 
         # m is number of words in the document,
         # and l is the hidden_dim.
         b, m, l = U.size()
-        indices = torch.arange(0, b)
+        indices = torch.arange(0, b).to(self.device)
         # print(b, m, l)
         # print(U[:, prev_start, :].shape)
         everyone = torch.cat((cur_h, U[indices, prev_start, :], U[indices, prev_end, :]), -1)
