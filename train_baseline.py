@@ -17,7 +17,7 @@ import util
 from args import get_train_args
 from collections import OrderedDict
 from json import dumps
-from models import CoAttention
+from models import BiDAF
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 from ujson import load as json_load
@@ -46,12 +46,9 @@ def main(args):
 
     # Get model
     log.info('Building model...')
-    # model = BiDAF(word_vectors=word_vectors,
-    #               hidden_size=args.hidden_size,
-    #               drop_prob=args.drop_prob)
-    model = CoAttention(word_vectors=word_vectors,
-                        hidden_size=args.hidden_size,
-                        drop_prob=args.drop_prob)
+    model = BiDAF(word_vectors=word_vectors,
+                  hidden_size=args.hidden_size,
+                  drop_prob=args.drop_prob)
     model = nn.DataParallel(model, args.gpu_ids)
     if args.load_path:
         log.info(f'Loading checkpoint from {args.load_path}...')
@@ -70,7 +67,6 @@ def main(args):
                                  log=log)
 
     # Get optimizer and scheduler
-    # TODO: Change it to Adam
     optimizer = optim.Adadelta(model.parameters(), args.lr,
                                weight_decay=args.l2_wd)
     scheduler = sched.LambdaLR(optimizer, lambda s: 1.)  # Constant LR
@@ -107,11 +103,9 @@ def main(args):
                 optimizer.zero_grad()
 
                 # Forward
-                pred_start, pred_end, loss = model(cw_idxs, qw_idxs, y1, y2)
-
-                # log_p1, log_p2 = model(cw_idxs, qw_idxs)
-                # y1, y2 = y1.to(device), y2.to(device)
-                # loss = F.nll_loss(log_p1, y1) + F.nll_loss(log_p2, y2)
+                log_p1, log_p2 = model(cw_idxs, qw_idxs)
+                y1, y2 = y1.to(device), y2.to(device)
+                loss = F.nll_loss(log_p1, y1) + F.nll_loss(log_p2, y2)
                 loss_val = loss.item()
 
                 # Backward
@@ -125,8 +119,8 @@ def main(args):
                 step += batch_size
                 progress_bar.update(batch_size)
                 progress_bar.set_postfix(epoch=epoch,
-                                         CELoss=loss_val)
-                tbx.add_scalar('train/CELoss', loss_val, step)
+                                         NLL=loss_val)
+                tbx.add_scalar('train/NLL', loss_val, step)
                 tbx.add_scalar('train/LR',
                                optimizer.param_groups[0]['lr'],
                                step)
@@ -162,7 +156,7 @@ def main(args):
 
 
 def evaluate(model, data_loader, device, eval_file, max_len, use_squad_v2):
-    celoss_meter = util.AverageMeter()
+    nll_meter = util.AverageMeter()
 
     model.eval()
     pred_dict = {}
@@ -177,21 +171,18 @@ def evaluate(model, data_loader, device, eval_file, max_len, use_squad_v2):
             batch_size = cw_idxs.size(0)
 
             # Forward
-            starts, ends, loss = model(cw_idxs, qw_idxs, y1, y2)
-
-            # log_p1, log_p2 = model(cw_idxs, qw_idxs)
-            # y1, y2 = y1.to(device), y2.to(device)
-            # loss = F.nll_loss(log_p1, y1) + F.nll_loss(log_p2, y2)
-            loss_val = loss.item()
+            log_p1, log_p2 = model(cw_idxs, qw_idxs)
+            y1, y2 = y1.to(device), y2.to(device)
+            loss = F.nll_loss(log_p1, y1) + F.nll_loss(log_p2, y2)
+            nll_meter.update(loss.item(), batch_size)
 
             # Get F1 and EM scores
-            # p1, p2 = log_p1.exp(), log_p2.exp()
-            # starts, ends = util.discretize(p1, p2, max_len, use_squad_v2)
-            
+            p1, p2 = log_p1.exp(), log_p2.exp()
+            starts, ends = util.discretize(p1, p2, max_len, use_squad_v2)
 
             # Log info
             progress_bar.update(batch_size)
-            progress_bar.set_postfix(CELoss=celoss_meter.avg)
+            progress_bar.set_postfix(NLL=nll_meter.avg)
 
             preds, _ = util.convert_tokens(gold_dict,
                                            ids.tolist(),
@@ -203,7 +194,7 @@ def evaluate(model, data_loader, device, eval_file, max_len, use_squad_v2):
     model.train()
 
     results = util.eval_dicts(gold_dict, pred_dict, use_squad_v2)
-    results_list = [('CELoss', celoss_meter.avg),
+    results_list = [('NLL', nll_meter.avg),
                     ('F1', results['F1']),
                     ('EM', results['EM'])]
     if use_squad_v2:

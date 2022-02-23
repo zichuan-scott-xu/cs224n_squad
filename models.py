@@ -98,7 +98,7 @@ class CoAttention(nn.Module):
         - qw_idxs: Indices of the words in the question.
             Shape (batch_size, question_len,).
     '''
-    def forward(self, cw_idxs, qw_idxs):
+    def forward(self, cw_idxs, qw_idxs, true_start, true_end):
         batch_size = cw_idxs.size(0)
 
         # Detect the actual length of the sentences
@@ -137,12 +137,8 @@ class CoAttention(nn.Module):
         temporal_info = temporal_info[:, :-1, :] # (B, m, 3l)
         U = self.dropout(self.fusion_lstm(temporal_info, c_len)) # (B, m, 2l)
 
-        pred_start, pred_end = self.decoder(U)
+        pred_start, pred_end, loss = self.decoder(U, true_start, true_end, c_len)
 
-        print("U shape: ", U.shape)
-        # print("The loss is", loss)
-        print("The predicted start is at", pred_start)
-        print("the predicted end is at", pred_end)
-        return "Hi"
+        return pred_start, pred_end, loss
 
 
