@@ -276,12 +276,14 @@ class DynamicDecoder(nn.Module):
         self.start = HighMaxoutNetwork(self.hidden_dim, pooling_size)
         self.end = HighMaxoutNetwork(self.hidden_dim, pooling_size)
         self.loss = nn.CrossEntropyLoss()
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
 
     def forward(self, U, true_start, true_end, c_len):
         b, m, l = U.size()
-        prev_start = torch.zeros(b, dtype=torch.long)
-        prev_end = torch.full((b, ), m-1)
-        h = torch.zeros((b, l // 2))
+        prev_start = torch.zeros(b, dtype=torch.long).to(self.device)
+        prev_end = torch.full((b, ), m-1).to(self.device)
+        h = torch.zeros((b, l // 2)).to(self.device)
         
         for _ in range(self.max_iter_num):
             alpha_logit_start = self.start(U, h, prev_start, prev_end, c_len)
