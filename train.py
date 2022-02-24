@@ -71,9 +71,9 @@ def main(args):
 
     # Get optimizer and scheduler
     # TODO: Change it to Adam
-    optimizer = optim.Adadelta(model.parameters(), args.lr,
-                               weight_decay=args.l2_wd)
-    scheduler = sched.LambdaLR(optimizer, lambda s: 1.)  # Constant LR
+    optimizer = optim.Adam(model.parameters(), args.lr)
+                               # weight_decay=args.l2_wd)
+    # scheduler = sched.LambdaLR(optimizer, lambda s: 1.)  # Constant LR
 
     # Get data loader
     log.info('Building dataset...')
