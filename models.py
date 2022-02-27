@@ -72,17 +72,18 @@ class BiDAF(nn.Module):
         return out
 
 class CoAttention(nn.Module):
-    def __init__(self, word_vectors, hidden_size, drop_prob=0.2):
+    def __init__(self, word_vectors, embedding_size, hidden_size, drop_prob=0.2):
         # TODO: write input and output parameters and pass them to layers
         super().__init__()
 
         # Initialize hyperparameters here
+        self.embedding_size = embedding_size
         self.hidden_size = hidden_size
         self.drop_prob = drop_prob
 
         # Initialize layers here
-        self.emb = layers.Embedding(word_vectors=word_vectors, hidden_size=self.hidden_size, drop_prob=self.drop_prob)
-        self.lstm_encoder = layers.LSTMEncoder(self.hidden_size, self.hidden_size)
+        self.emb = layers.Embedding(word_vectors=word_vectors, hidden_size=self.embedding_size, drop_prob=self.drop_prob)
+        self.lstm_encoder = layers.LSTMEncoder(self.embedding_size, self.hidden_size)
         self.question_proj = nn.Linear(self.hidden_size, self.hidden_size)
         self.dropout = nn.Dropout(self.drop_prob)
         self.sentinel_c = nn.Parameter(torch.rand(self.hidden_size,))

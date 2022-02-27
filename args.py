@@ -242,3 +242,7 @@ def add_train_test_args(parser):
                         type=str,
                         default=None,
                         help='Path to load as a model checkpoint.')
+    parser.add_argument('--embedding_size',
+                        type=int,
+                        default=200,
+                        help='Embedding size of word vectors')

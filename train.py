@@ -50,6 +50,7 @@ def main(args):
     #               hidden_size=args.hidden_size,
     #               drop_prob=args.drop_prob)
     model = CoAttention(word_vectors=word_vectors,
+                        embedding_size=args.embedding_size,
                         hidden_size=args.hidden_size,
                         drop_prob=args.drop_prob)
     model = nn.DataParallel(model, args.gpu_ids)
