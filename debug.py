@@ -16,7 +16,7 @@ word_vectors = torch_from_json(args.word_emb_file)
 
 # Get model
 print('Building model...')
-model = models.CoAttention(word_vectors=word_vectors,
+model = models.CoAttention(word_vectors=word_vectors, embedding_size = args.embedding_size, 
                 hidden_size=args.hidden_size,
                 drop_prob=args.drop_prob)
 

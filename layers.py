@@ -271,7 +271,7 @@ class DynamicDecoder(nn.Module):
         super().__init__()
         # self.true_answer = true_answer
         self.hidden_dim = hidden_dim
-        self.decoder = nn.LSTM(hidden_dim * 4, hidden_dim, bidirectional=False)
+        self.decoder = nn.LSTM(hidden_dim * 4, hidden_dim, batch_first=True, bidirectional=False)
         self.max_iter_num = max_iter_num
         self.start = HighMaxoutNetwork(self.hidden_dim, pooling_size)
         self.end = HighMaxoutNetwork(self.hidden_dim, pooling_size)
@@ -283,12 +283,21 @@ class DynamicDecoder(nn.Module):
         b, m, l = U.size()
         prev_start = torch.zeros(b, dtype=torch.long).to(self.device)
         prev_end = torch.full((b, ), m-1).to(self.device)
-        h = torch.zeros((b, l // 2)).to(self.device)
+        # h = torch.zeros((b, l // 2)).to(self.device)
+        hid_state = None
+        indices = torch.arange(0, b).to(self.device)
         
         for _ in range(self.max_iter_num):
+            start_end = torch.cat((U[indices, prev_start, :], U[indices, prev_end, :]), -1)
+            _, hid_state = self.decoder(start_end.unsqueeze(1), hid_state)
+            h, _ = hid_state
+            h = h.view(-1, self.hidden_dim)
+            # print(h.shape)
+    
             alpha_logit_start = self.start(U, h, prev_start, prev_end, c_mask)
-            prev_start = alpha_logit_start.argmax(-1)
             alpha_logit_end = self.end(U, h, prev_start, prev_end, c_mask)
+            
+            prev_start = alpha_logit_start.argmax(-1)
             prev_end = alpha_logit_end.argmax(-1)
 
         loss = self.loss(alpha_logit_start, true_start) + self.loss(alpha_logit_end, true_end)
