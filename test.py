@@ -21,7 +21,7 @@ import util
 from args import get_test_args
 from collections import OrderedDict
 from json import dumps
-from models import BiDAF
+from models import CoAttention
 from os.path import join
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
@@ -43,8 +43,12 @@ def main(args):
 
     # Get model
     log.info('Building model...')
-    model = BiDAF(word_vectors=word_vectors,
-                  hidden_size=args.hidden_size)
+    # model = BiDAF(word_vectors=word_vectors,
+    #               hidden_size=args.hidden_size)
+    model = CoAttention(word_vectors=word_vectors,
+                        embedding_size=args.embedding_size,
+                        hidden_size=args.hidden_size,
+                        drop_prob=args.drop_prob)
     model = nn.DataParallel(model, gpu_ids)
     log.info(f'Loading checkpoint from {args.load_path}...')
     model = util.load_model(model, args.load_path, gpu_ids, return_step=False)
@@ -63,7 +67,9 @@ def main(args):
 
     # Evaluate
     log.info(f'Evaluating on {args.split} split...')
-    nll_meter = util.AverageMeter()
+    # nll_meter = util.AverageMeter()
+    celoss_meter = util.AverageMeter()
+
     pred_dict = {}  # Predictions for TensorBoard
     sub_dict = {}   # Predictions for submission
     eval_file = vars(args)[f'{args.split}_eval_file']
@@ -78,20 +84,25 @@ def main(args):
             batch_size = cw_idxs.size(0)
 
             # Forward
-            log_p1, log_p2 = model(cw_idxs, qw_idxs)
-            y1, y2 = y1.to(device), y2.to(device)
-            loss = F.nll_loss(log_p1, y1) + F.nll_loss(log_p2, y2)
-            nll_meter.update(loss.item(), batch_size)
+            starts, ends, loss = model(cw_idxs, qw_idxs, y1, y2)
+
+            # log_p1, log_p2 = model(cw_idxs, qw_idxs)
+            # y1, y2 = y1.to(device), y2.to(device)
+            # loss = F.nll_loss(log_p1, y1) + F.nll_loss(log_p2, y2)
+            loss_val = loss.item()
+            celoss_meter.update(loss.item(), batch_size)
 
             # Get F1 and EM scores
-            p1, p2 = log_p1.exp(), log_p2.exp()
-            starts, ends = util.discretize(p1, p2, args.max_ans_len, args.use_squad_v2)
+            # p1, p2 = log_p1.exp(), log_p2.exp()
+            # starts, ends = util.discretize(p1, p2, args.max_ans_len, args.use_squad_v2)
 
             # Log info
             progress_bar.update(batch_size)
             if args.split != 'test':
                 # No labels for the test set, so NLL would be invalid
-                progress_bar.set_postfix(NLL=nll_meter.avg)
+                # progress_bar.set_postfix(NLL=nll_meter.avg)
+                progress_bar.set_postfix(CELoss=celoss_meter.avg)
+
 
             idx2pred, uuid2pred = util.convert_tokens(gold_dict,
                                                       ids.tolist(),
@@ -104,9 +115,12 @@ def main(args):
     # Log results (except for test set, since it does not come with labels)
     if args.split != 'test':
         results = util.eval_dicts(gold_dict, pred_dict, args.use_squad_v2)
-        results_list = [('NLL', nll_meter.avg),
-                        ('F1', results['F1']),
-                        ('EM', results['EM'])]
+        # results_list = [('NLL', nll_meter.avg),
+        #                 ('F1', results['F1']),
+        #                 ('EM', results['EM'])]
+        results_list = [('CELoss', celoss_meter.avg),
+                    ('F1', results['F1']),
+                    ('EM', results['EM'])]
         if args.use_squad_v2:
             results_list.append(('AvNA', results['AvNA']))
         results = OrderedDict(results_list)
