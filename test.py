@@ -47,8 +47,7 @@ def main(args):
     #               hidden_size=args.hidden_size)
     model = CoAttention(word_vectors=word_vectors,
                         embedding_size=args.embedding_size,
-                        hidden_size=args.hidden_size,
-                        drop_prob=args.drop_prob)
+                        hidden_size=args.hidden_size)
     model = nn.DataParallel(model, gpu_ids)
     log.info(f'Loading checkpoint from {args.load_path}...')
     model = util.load_model(model, args.load_path, gpu_ids, return_step=False)
