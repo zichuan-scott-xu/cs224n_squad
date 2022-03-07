@@ -9,6 +9,8 @@ import torch.utils.data as data
 import util
 import torch.utils.data as data
 import itertools
+import copy
+import string
 
 from args import get_train_args
 from collections import OrderedDict
@@ -45,6 +47,7 @@ from util import collate_fn, SQuAD
 # 			'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 
 # 			'very', 's', 't', 'can', 'will', 'just', 'don', 
 # 			'should', 'now', '']
+
 def main(args):
     # train_dataset = SQuAD(args.train_record_file, args.use_squad_v2)
     # print(train_dataset.context_idxs)
@@ -52,47 +55,78 @@ def main(args):
     with open('./data/train-v2.0.json', 'r') as original:
         train_dict = json_load(original)
     # print(len(train_dict['data']))
-    augmented = train_dict.copy()
-    for example in augmented['data']:
-        aug_example = example.copy()
+    augmented = copy.deepcopy(train_dict)
+    print(len(train_dict['data']), ' total')
+    for example in train_dict['data']:
+        aug_example = copy.deepcopy(example)
         for bundle in aug_example['paragraphs']:
             # print(bundle['qas'][0])
+            # print(bundle['context'])
             sentences = bundle['context'].split('.')
+            new_context = []
+            answers_list = [entry['answers'][0]['text'].split(' ') for entry in bundle['qas'] if len(entry['answers']) > 0]
+            answers = list(itertools.chain(*answers_list))
+            # print(answers)
             for sentence in sentences:
+                
                 if random.choice([True, False]):
                     n = len(sentence) // alpha
-                    swap(sentence, n)
+                    new_context.append(swap(sentence, answers, n))
                 else:
-                    answers = list(itertools.chain([entry['answers'].split(' ') for entry in bundle['qas']]))
+                    # print(bundle['qas'][0]['answers'][0].keys())
                     p = 1/alpha
-                    delete(sentence, answers, p)
+                    new_context.append(delete(sentence, answers, p))
+            new_context_str = ' '.join((sen + '.') for sen in new_context)
+            new_context_str = ' '.join(new_context_str.split())
+            new_context_str = new_context_str.strip(string.punctuation).strip()
+            bundle['context'] = new_context_str
+            for entry in bundle['qas']:
+                if len(entry['answers']) > 0:
+                    pair = entry['answers'][0]
+                    pair['answer_start'] = new_context_str.find(pair['text'])
+                    if pair['answer_start'] == -1:
+                        entry['answers'] = []
+                    # print(new_context_str)
+                    # print(pair['answer_start'])
+                    # print(new_context_str[pair['answer_start']:pair['answer_start'] + len(pair['text'])])
+                    # print(pair['text'])
+                    # assert(new_context_str[pair['answer_start']:pair['answer_start'] + len(pair['text'])] == pair['text'])
         augmented['data'].append(aug_example)
-    with open('augmented_train.json', 'w') as f:
+        print(len(augmented['data']), ' examples processed.', end='\r')
+    with open('./data/augmented_train.json', 'w') as f:
         dump(augmented, f)
         
         
     
 
-def swap(sentence, n):
+def swap(sentence, answers, n):
     sentence = sentence.split(' ')
+    if len(sentence) < 2:
+        return ' '.join(word for word in sentence)
     new = sentence.copy()
     for _ in range(n):
-        idx1 = random.randint(0, len(sentence)-1)
-        idx2 = random.randint(idx1 + 1, len(sentence)-1)
-        new[idx1], new[idx2] = new[idx2], new[idx1]
-    new = new.join(' ')
-    return new
+        idx1 = random.randint(0, len(sentence)-2)
+        idx2 = random.randint(0, len(sentence)-2)
+        count = 0
+        while (idx1 == idx2) or new[idx1] in answers or new[idx2] in answers or (new[idx1].strip(string.punctuation) in answers) or (new[idx2].strip(string.punctuation) in answers):
+            if count > 3: break
+            idx1 = random.randint(0, len(sentence)-1)
+            idx2 = random.randint(0, len(sentence)-1)
+            count += 1
+        if count <= 3: new[idx1], new[idx2] = new[idx2], new[idx1]
+    new_str = ' '.join(word for word in new)
+    return new_str
 
 def delete(sentence, answers, p):
     sentence = sentence.split(' ')
-    if len(sentence) == 1: return sentence
+    if len(sentence) == 1: return sentence[0]
     new = []
     for word in sentence:
-        if random.random() > p or word in answers:
+        if random.random() > p or (word.strip(string.punctuation) in answers) or word in answers or word == sentence[-1]:
             new.append(word)
     if len(new) == 0: return sentence[0]
-    new = new.join(' ')
-    return new
+    new_str = ' '.join(word for word in new)
+    return new_str
 
 if __name__ == '__main__':
     main(get_train_args())
