@@ -142,4 +142,3 @@ class CoAttention(nn.Module):
 
         return pred_start, pred_end, loss
 
-

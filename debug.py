@@ -2,7 +2,7 @@
 Debug scripts to test the coattention model
 '''
 
-import models
+from qanet import QANet
 from util import SQuAD, collate_fn, torch_from_json
 import torch.utils.data as data
 import torch.nn.functional as F
@@ -13,12 +13,12 @@ args = get_train_args()
 # Get embeddings
 print('Loading embeddings...')
 word_vectors = torch_from_json(args.word_emb_file)
+char_vectors = torch_from_json(args.char_emb_file)
 
 # Get model
 print('Building model...')
-model = models.CoAttention(word_vectors=word_vectors, embedding_size = args.embedding_size, 
-                hidden_size=args.hidden_size,
-                drop_prob=args.drop_prob)
+model = QANet(word_vectors=word_vectors,
+              char_vectors=char_vectors)
 
 print('Building dataset...')
 train_dataset = SQuAD(args.train_record_file, args.use_squad_v2)
@@ -27,11 +27,10 @@ train_loader = data.DataLoader(train_dataset,
                                    shuffle=True,
                                    num_workers=0, # important to change it as 0, otherwise multiprocessing error
                                    collate_fn=collate_fn)
+
 for cw_idxs, cc_idxs, qw_idxs, qc_idxs, y1, y2, ids in train_loader:
-    pred_start, pred_end, loss = model(cw_idxs, qw_idxs, y1, y2)
-    print(pred_start)
-    print(y1)
-    print(loss)
+    result = model(cw_idxs, cc_idxs, qw_idxs, qc_idxs)
+    print('res: {}'.format(result))
     # loss = F
     break
     

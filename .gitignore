@@ -2,3 +2,4 @@ data/
 .DS_Store
 save/
 __pycache__/
+graph/
