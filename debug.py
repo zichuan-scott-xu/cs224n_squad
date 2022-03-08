@@ -17,8 +17,11 @@ char_vectors = torch_from_json(args.char_emb_file)
 
 # Get model
 print('Building model...')
+# model = QANet(word_mat=word_vectors,
+#               char_mat=char_vectors)
 model = QANet(word_vectors=word_vectors,
-              char_vectors=char_vectors)
+              char_vectors=char_vectors,
+              model_dim = 128) # TODO: add this in to args
 
 print('Building dataset...')
 train_dataset = SQuAD(args.train_record_file, args.use_squad_v2)

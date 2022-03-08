@@ -8,6 +8,7 @@ import os
 import queue
 import re
 import shutil
+from ssl import _create_default_https_context
 import string
 import torch
 import torch.nn.functional as F
@@ -85,7 +86,6 @@ class SQuAD(data.Dataset):
 
     def __len__(self):
         return len(self.valid_idxs)
-
 
 def collate_fn(examples):
     """Create batch tensors from a list of individual examples returned
