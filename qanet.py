@@ -159,9 +159,9 @@ class PositionEncoder(nn.Module):
         # PE[pos, 2i] = sin(pos/10000^{2i/model_dim})
         # PE[pos, 2i+1] = cos(pos/10000^{2i/model_dim})
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        self.PE = torch.empty((model_dim, length)).to(self.device)
+        self.PE = torch.empty((model_dim, length + 1)).to(self.device)
         for pos in range(model_dim):
-            for j in range(length):
+            for j in range(length + 1):
                 if j % 2 == 0:
                     self.PE[pos, j] = np.sin(pos/10000**(j/model_dim))
                 else:
