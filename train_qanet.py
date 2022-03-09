@@ -74,7 +74,7 @@ def main(args):
     #                            weight_decay=args.l2_wd)
     # scheduler = sched.LambdaLR(optimizer, lambda s: 1.)  # Constant LR
     model_params = filter(lambda p: p.requires_grad, model.parameters())
-    optimizer = optim.Adam(model_params, lr=args.start_lr, weight_decay=3e-7, betas=(0.8,0.999))
+    optimizer = optim.Adam(model_params, lr=args.start_lr, eps=1e-7, weight_decay=3e-7, betas=(0.8,0.999))
     cr = 1.0 / math.log(args.lr_warmup)
     scheduler = optim.lr_scheduler.LambdaLR(
         optimizer,
