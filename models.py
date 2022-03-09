@@ -73,7 +73,6 @@ class BiDAF(nn.Module):
 
 class CoAttention(nn.Module):
     def __init__(self, word_vectors, embedding_size, hidden_size, drop_prob=0.2):
-        # TODO: write input and output parameters and pass them to layers
         super().__init__()
 
         # Initialize hyperparameters here
