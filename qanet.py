@@ -275,5 +275,5 @@ class QANet(nn.Module):
         M2 = M1
         for model_enc in self.model_encs:
             M2 = model_enc(M2, c_mask)
-        p1, p2 = self.decoder(M0, M1, M2, c_mask)
-        return p1, p2
+        log_p1, log_p2 = self.decoder(M0, M1, M2, c_mask)
+        return log_p1, log_p2

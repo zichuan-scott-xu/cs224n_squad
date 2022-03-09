@@ -132,7 +132,7 @@ def get_train_args():
                         help='Random seed for reproducibility.')
     parser.add_argument('--ema_decay',
                         type=float,
-                        default=0.999,
+                        default=0.9999, # modified
                         help='Decay rate for exponential moving average of parameters.')
 
     args = parser.parse_args()
@@ -246,3 +246,16 @@ def add_train_test_args(parser):
                         type=int,
                         default=200,
                         help='Embedding size of word vectors')
+    # QANET
+    parser.add_argument('--qanet_hidden',
+                        type=int,
+                        default=64, # the default paper use 128
+                        help='Hidden layer dimension in QANet model')
+    parser.add_argument('--start_lr',
+                        type=float,
+                        default=0.001, # the default paper use 128
+                        help='learning rate after warmup')
+    parser.add_argument('--lr_warmup',
+                        type=float,
+                        default=1000, # the default paper use 128
+                        help='Learning rate warmup step')
