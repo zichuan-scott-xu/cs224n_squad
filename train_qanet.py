@@ -74,10 +74,10 @@ def main(args):
     # scheduler = sched.LambdaLR(optimizer, lambda s: 1.)  # Constant LR
     model_params = filter(lambda p: p.requires_grad, model.parameters())
     optimizer = optim.Adam(model_params, lr=args.start_lr, weight_decay=3e-7, betas=(0.8,0.999))
-    cr = 1.0 / math.log(args.lr_warm_up)
+    cr = 1.0 / math.log(args.lr_warmup)
     scheduler = optim.lr_scheduler.LambdaLR(
         optimizer,
-        lr_lambda=lambda t: cr * math.log(t + 1) if t < args.lr_warm_up else 1)
+        lr_lambda=lambda t: cr * math.log(t + 1) if t < args.lr_warmup else 1)
 
     # Get data loader
     log.info('Building dataset...')
