@@ -6,7 +6,7 @@ import math
 
 
 def maskout_padding(x, mask):
-    return x * mask + (-1e30) * (1 - mask)
+    return x * mask + (-1e15) * (1 - mask)
 
 class DepthWiseSeparableConv(nn.Module):
     """DepthWise Seperable Convolutional Network Based on the paper and 
