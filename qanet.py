@@ -233,7 +233,7 @@ class QANetDecoder(nn.Module):
 
 
 class QANet(nn.Module):
-    def __init__(self, word_vectors, char_vectors, model_dim, layer_dropout=0.1):
+    def __init__(self, word_vectors, char_vectors, model_dim, layer_dropout=0.1, num_model_enc_block=5):
         super().__init__()
         self.word_dim = word_vectors.shape[1]
         self.char_dim = char_vectors.shape[1]
@@ -246,7 +246,7 @@ class QANet(nn.Module):
         self.c_emb_encoder = QANetEncoderBlock(d=model_dim, max_length=400)
         self.q_emb_encoder = QANetEncoderBlock(d=model_dim, max_length=50)
         self.coattention = CoAttention(model_dim, dropout_prob=layer_dropout)
-        self.model_encs = nn.ModuleList([QANetEncoderBlock(d=model_dim, max_length=400, num_conv=2, kernel_size=5)] * 7)
+        self.model_encs = nn.ModuleList([QANetEncoderBlock(d=model_dim, max_length=400, num_conv=2, kernel_size=5)] * num_model_enc_block)
         self.decoder = QANetDecoder(model_dim)
 
     def forward(self, cw_idxs, cc_idxs, qw_idxs, qc_idxs):

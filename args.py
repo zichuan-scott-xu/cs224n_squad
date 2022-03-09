@@ -259,3 +259,7 @@ def add_train_test_args(parser):
                         type=float,
                         default=1000, # the default paper use 128
                         help='Learning rate warmup step')
+    parser.add_argument('--num_enc_blocks',
+                        type=int,
+                        default=5, # the default paper use 128
+                        help='Number of encoder block')
