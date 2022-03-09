@@ -256,10 +256,14 @@ def add_train_test_args(parser):
                         default=0.001, # the default paper use 128
                         help='learning rate after warmup')
     parser.add_argument('--lr_warmup',
-                        type=float,
+                        type=int,
                         default=1000, # the default paper use 128
                         help='Learning rate warmup step')
     parser.add_argument('--num_enc_blocks',
                         type=int,
-                        default=5, # the default paper use 128
+                        default=5, # the default paper use 7
                         help='Number of encoder block')
+    parser.add_argument('--num_heads',
+                        type=int,
+                        default=1, # the default paper use 8
+                        help='Number of heads in multihead attention')

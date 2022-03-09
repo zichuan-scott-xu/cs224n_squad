@@ -173,14 +173,14 @@ class PositionEncoder(nn.Module):
 
 
 class QANetEncoderBlock(nn.Module):
-    def __init__(self, d, max_length=400, num_conv=4, kernel_size=7, layer_dropout=0.1):
+    def __init__(self, d, max_length=400, num_conv=4, kernel_size=7, num_heads=1, layer_dropout=0.1):
         super().__init__()
         self.num_conv = num_conv
         self.layer_dropout = layer_dropout
         self.pos_enc = PositionEncoder(d, max_length)
         self.conv_re = nn.ModuleList([DepthWiseSeparableConv(d, d, kernel_size=kernel_size, dim=1) for _ in range(num_conv)])
         self.layernorm_re = nn.ModuleList([nn.LayerNorm(d) for _ in range(num_conv)])
-        self.att = MultiHeadAttention(d, num_heads=8, dropout_prob=layer_dropout)
+        self.att = MultiHeadAttention(d, num_heads=num_heads, dropout_prob=layer_dropout)
         self.layernorm2 = nn.LayerNorm(d)
         self.layernorm3 = nn.LayerNorm(d)
         self.fc = nn.Linear(in_features=d, out_features=d)
@@ -233,7 +233,7 @@ class QANetDecoder(nn.Module):
 
 
 class QANet(nn.Module):
-    def __init__(self, word_vectors, char_vectors, model_dim, layer_dropout=0.1, num_model_enc_block=5):
+    def __init__(self, word_vectors, char_vectors, model_dim, num_heads, layer_dropout=0.1, num_model_enc_block=5):
         super().__init__()
         self.word_dim = word_vectors.shape[1]
         self.char_dim = char_vectors.shape[1]
@@ -243,10 +243,10 @@ class QANet(nn.Module):
         self.emb = Embedding(self.word_dim, self.char_dim)
         self.c_emb_conv = DepthWiseSeparableConv(self.word_dim + self.char_dim, model_dim, 5)
         self.q_emb_conv = DepthWiseSeparableConv(self.word_dim + self.char_dim, model_dim, 5)
-        self.c_emb_encoder = QANetEncoderBlock(d=model_dim, max_length=400)
-        self.q_emb_encoder = QANetEncoderBlock(d=model_dim, max_length=50)
+        self.c_emb_encoder = QANetEncoderBlock(d=model_dim, num_heads=num_heads, max_length=400)
+        self.q_emb_encoder = QANetEncoderBlock(d=model_dim, num_heads=num_heads, max_length=50)
         self.coattention = CoAttention(model_dim, dropout_prob=layer_dropout)
-        self.model_encs = nn.ModuleList([QANetEncoderBlock(d=model_dim, max_length=400, num_conv=2, kernel_size=5)] * num_model_enc_block)
+        self.model_encs = nn.ModuleList([QANetEncoderBlock(d=model_dim, num_heads=num_heads, max_length=400, num_conv=2, kernel_size=5)] * num_model_enc_block)
         self.decoder = QANetDecoder(model_dim)
 
     def forward(self, cw_idxs, cc_idxs, qw_idxs, qc_idxs):
