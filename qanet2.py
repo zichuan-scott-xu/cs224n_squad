@@ -6,7 +6,7 @@ import math
 
 
 def mask_logits(x, mask):
-    return x * mask + (-1e15) * (1 - mask)
+    return x * mask + (-1e30) * (1 - mask)
 
 class DepthWiseSeparableConv(nn.Module):
     """DepthWise Seperable Convolutional Network Based on the paper and 
@@ -294,8 +294,9 @@ class QANetDecoder(nn.Module):
         X2 = torch.cat([M1, M3], dim=1)
         Y1 = mask_logits(self.w1(X1).squeeze(), mask)
         Y2 = mask_logits(self.w2(X2).squeeze(), mask)
-        return Y1, Y2
-
+        p1 = F.log_softmax(Y1, dim=1)
+        p2 = F.log_softmax(Y2, dim=1)
+        return p1, p2
 
 class QANet(nn.Module):
     def __init__(self, word_vectors, char_vectors, model_dim, num_heads, layer_dropout=0.1, num_model_enc_block=5):
