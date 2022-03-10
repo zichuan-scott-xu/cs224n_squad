@@ -58,6 +58,7 @@ def main(args):
                   c_max_len=400,
                   q_max_len=50,
                   d_model=args.qanet_hidden,
+                  num_enc_blocks=args.num_enc_blocks,
                   train_cemb=True,
                   pad=0,
                   dropout=0.1,

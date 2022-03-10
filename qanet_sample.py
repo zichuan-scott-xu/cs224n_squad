@@ -357,7 +357,7 @@ class Pointer(nn.Module):
 
 class QANet(nn.Module):
     def __init__(self, word_mat, char_mat,
-                 c_max_len, q_max_len, d_model, train_cemb=False, pad=0,
+                 c_max_len, q_max_len, d_model, train_cemb=False, pad=0, num_enc_blocks=4,
                  dropout=0.1, num_head=1):  # !!! notice: set it to be a config parameter later.
         super().__init__()
         if train_cemb:
@@ -372,12 +372,13 @@ class QANet(nn.Module):
         self.emb_enc = EncoderBlock(conv_num=4, d_model=d_model, num_head=num_head, k=7, dropout=0.1)
         self.cq_att = CQAttention(d_model=d_model)
         self.cq_resizer = Initialized_Conv1d(d_model * 4, d_model)
-        self.model_enc_blks = nn.ModuleList([EncoderBlock(conv_num=2, d_model=d_model, num_head=num_head, k=5, dropout=0.1) for _ in range(7)])
+        self.model_enc_blks = nn.ModuleList([EncoderBlock(conv_num=2, d_model=d_model, num_head=num_head, k=5, dropout=0.1) for _ in range(num_enc_blocks)])
         self.out = Pointer(d_model)
         self.PAD = pad
         self.Lc = c_max_len
         self.Lq = q_max_len
         self.dropout = dropout
+        self.num_enc_blocks = num_enc_blocks
 
     def forward(self, Cwid, Ccid, Qwid, Qcid):
         maskC = (torch.ones_like(Cwid) *
@@ -393,14 +394,14 @@ class QANet(nn.Module):
         M0 = self.cq_resizer(X)
         M0 = F.dropout(M0, p=self.dropout, training=self.training)
         for i, blk in enumerate(self.model_enc_blks):
-             M0 = blk(M0, maskC, i*(2+2)+1, 7)
+             M0 = blk(M0, maskC, i*(2+2)+1, self.num_enc_blocks)
         M1 = M0
         for i, blk in enumerate(self.model_enc_blks):
-             M0 = blk(M0, maskC, i*(2+2)+1, 7)
+             M0 = blk(M0, maskC, i*(2+2)+1, self.num_enc_blocks)
         M2 = M0
         M0 = F.dropout(M0, p=self.dropout, training=self.training)
         for i, blk in enumerate(self.model_enc_blks):
-             M0 = blk(M0, maskC, i*(2+2)+1, 7)
+             M0 = blk(M0, maskC, i*(2+2)+1, self.num_enc_blocks)
         M3 = M0
         p1, p2 = self.out(M1, M2, M3, maskC)
         return p1, p2
