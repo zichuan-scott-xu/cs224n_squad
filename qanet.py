@@ -5,7 +5,7 @@ import numpy as np
 import math
 
 
-def maskout_padding(x, mask):
+def mask_logits(x, mask):
     return x * mask + (-1e15) * (1 - mask)
 
 class DepthWiseSeparableConv(nn.Module):
@@ -33,37 +33,21 @@ class DepthWiseSeparableConv(nn.Module):
 
 
 class HighwayEncoder(nn.Module):
-    """Encode an input sequence using a highway network.
-    (Modified by transposing x to fit the dimension)
-
-    Based on the paper:
-    "Highway Networks"
-    by Rupesh Kumar Srivastava, Klaus Greff, Jürgen Schmidhuber
-    (https://arxiv.org/abs/1505.00387).
-
-    Args:
-        num_layers (int): Number of layers in the highway encoder.
-        hidden_size (int): Size of hidden activations.
-    """
     def __init__(self, num_layers, hidden_size):
-        super(HighwayEncoder, self).__init__()
-        self.transforms = nn.ModuleList([nn.Linear(hidden_size, hidden_size)
-                                         for _ in range(num_layers)])
-        self.gates = nn.ModuleList([nn.Linear(hidden_size, hidden_size)
-                                    for _ in range(num_layers)])
+        super().__init__()
+        self.num_layers = num_layers
+        self.linear = nn.ModuleList([Initialized_Conv1d(hidden_size, hidden_size, relu=False, bias=True) for _ in range(num_layers)])
+        self.gate = nn.ModuleList([Initialized_Conv1d(hidden_size, hidden_size, bias=True) for _ in range(num_layers)])
 
     def forward(self, x):
-        #x : [b, word_dim + char_dim, seq_len]
-        x = x.transpose(1, 2) # [b, seq_len, word_dim+char_dim=hidden_size]
-        for gate, transform in zip(self.gates, self.transforms):
-            # Shapes of g, t, and x are all (batch_size, seq_len, hidden_size)
-            g = torch.sigmoid(gate(x))
-            t = F.relu(transform(x))
-            x = g * t + (1 - g) * x
-        x = x.transpose(1, 2)
+        #x: shape [batch_size, hidden_size, length]
+        dropout = 0.1
+        for i in range(self.num_layers):
+            gate = F.sigmoid(self.gate[i](x))
+            nonlinear = self.linear[i](x)
+            nonlinear = F.dropout(nonlinear, p=dropout, training=self.training)
+            x = gate * nonlinear + (1 - gate) * x
         return x
-
-
 
 class Embedding(nn.Module):
     def __init__(self, word_dim, char_dim, drop_prob_word=0.1, drop_prob_char=0.05):
@@ -95,7 +79,8 @@ class CoAttention(nn.Module):
         W0 = torch.empty(3 * model_dim)
         nn.init.uniform_(W0, -1 / math.sqrt(model_dim), 1 / math.sqrt(model_dim))
         self.W0 = nn.Parameter(W0)
-        self.resizer = DepthWiseSeparableConv(model_dim * 4, model_dim, 5)
+        # self.resizer = DepthWiseSeparableConv(model_dim * 4, model_dim, 5)
+        self.resizer = Initialized_Conv1d(model_dim * 4, model_dim)
 
     def forward(self, C, Q, c_mask, q_mask):
         c_len, q_len = C.size(2), Q.size(2)
@@ -108,8 +93,8 @@ class CoAttention(nn.Module):
         C_Q = torch.mul(C, Q)
         S = torch.cat([C, Q, C_Q], dim=3) # [b, c_len, q_len, 3 * model_dim]
         S = torch.matmul(S, self.W0) # [b, c_len, q_len]
-        S_bar = F.softmax(maskout_padding(S, q_mask), dim=2) # [b, c_len, q_len]
-        S_bbar = F.softmax(maskout_padding(S, c_mask), dim=1) #[b, c_len, q_len]
+        S_bar = F.softmax(mask_logits(S, q_mask), dim=2) # [b, c_len, q_len]
+        S_bbar = F.softmax(mask_logits(S, c_mask), dim=1) #[b, c_len, q_len]
         A = torch.bmm(S_bar, Q_t) # [b, c_len, model_dim] 
         B = torch.bmm(torch.bmm(S_bar, S_bbar.transpose(1, 2)), C_t) # [b, c_len, model_dim] 
         out = torch.cat([C_t, A, torch.mul(C_t, A), torch.mul(C_t, B)], dim=2) # [b, c_len, 4 * model_dim]
@@ -117,6 +102,110 @@ class CoAttention(nn.Module):
         out = out.transpose(1,2) # [b, 4*model_dim, c_len]
         out = self.resizer(out)
         return out
+
+
+class Initialized_Conv1d(nn.Module):
+    def __init__(self, in_channels, out_channels,
+                 kernel_size=1, stride=1, padding=0, groups=1,
+                 relu=False, bias=False):
+        super().__init__()
+        self.out = nn.Conv1d(
+            in_channels, out_channels,
+            kernel_size, stride=stride,
+            padding=padding, groups=groups, bias=bias)
+        if relu is True:
+            self.relu = True
+            nn.init.kaiming_normal_(self.out.weight, nonlinearity='relu')
+        else:
+            self.relu = False
+            nn.init.xavier_uniform_(self.out.weight)
+
+    def forward(self, x):
+        if self.relu is True:
+            return F.relu(self.out(x))
+        else:
+            return self.out(x)
+
+
+# TODO: modify the code for self attention
+class SelfAttention(nn.Module):
+    def __init__(self, model_dim, num_head, dropout):
+        super().__init__()
+        self.model_dim = model_dim
+        self.num_head = num_head
+        self.dropout = dropout
+        self.mem_conv = Initialized_Conv1d(in_channels=model_dim, out_channels=model_dim*2, kernel_size=1, relu=False, bias=False)
+        self.query_conv = Initialized_Conv1d(in_channels=model_dim, out_channels=model_dim, kernel_size=1, relu=False, bias=False)
+        bias = torch.empty(1)
+        nn.init.constant_(bias, 0)
+        self.bias = nn.Parameter(bias)
+
+    def forward(self, queries, mask):
+        memory = queries
+        memory = self.mem_conv(memory)
+        query = self.query_conv(queries)
+        memory = memory.transpose(1, 2)
+        query = query.transpose(1, 2)
+        Q = self.split_last_dim(query, self.num_head)
+        K, V = [self.split_last_dim(tensor, self.num_head) for tensor in torch.split(memory, self.d_model, dim=2)]
+
+        key_depth_per_head = self.d_model // self.num_head
+        Q *= key_depth_per_head ** (-0.5)
+        x = self.dot_product_attention(Q, K, V, mask = mask)
+        return self.combine_last_two_dim(x.permute(0, 2, 1, 3)).transpose(1, 2)
+
+    def dot_product_attention(self, q, k ,v, bias = False, mask = None):
+        """dot-product attention.
+        Args:
+        q: a Tensor with shape [batch, heads, length_q, depth_k]
+        k: a Tensor with shape [batch, heads, length_kv, depth_k]
+        v: a Tensor with shape [batch, heads, length_kv, depth_v]
+        bias: bias Tensor (see attention_bias())
+        is_training: a bool of training
+        scope: an optional string
+        Returns:
+        A Tensor.
+        """
+        logits = torch.matmul(q,k.permute(0,1,3,2))
+        if bias:
+            logits += self.bias
+        if mask is not None:
+            shapes = [x  if x != None else -1 for x in list(logits.size())]
+            mask = mask.view(shapes[0], 1, 1, shapes[-1])
+            logits = mask_logits(logits, mask)
+        weights = F.softmax(logits, dim=-1)
+        # dropping out the attention links for each of the heads
+        weights = F.dropout(weights, p=self.dropout, training=self.training)
+        return torch.matmul(weights, v)
+
+    def split_last_dim(self, x, n):
+        """Reshape x so that the last dimension becomes two dimensions.
+        The first of these two dimensions is n.
+        Args:
+        x: a Tensor with shape [..., m]
+        n: an integer.
+        Returns:
+        a Tensor with shape [..., n, m/n]
+        """
+        old_shape = list(x.size())
+        last = old_shape[-1]
+        new_shape = old_shape[:-1] + [n] + [last // n if last else None]
+        ret = x.view(new_shape)
+        return ret.permute(0, 2, 1, 3)
+
+    def combine_last_two_dim(self, x):
+        """Reshape x so that the last two dimension become one.
+        Args:
+        x: a Tensor with shape [..., a, b]
+        Returns:
+        a Tensor with shape [..., ab]
+        """
+        old_shape = list(x.size())
+        a, b = old_shape[-2:]
+        new_shape = old_shape[:-2] + [a * b if a and b else None]
+        ret = x.contiguous().view(new_shape)
+        return ret
+
 
 
 class MultiHeadAttention(nn.Module):
@@ -144,7 +233,7 @@ class MultiHeadAttention(nn.Module):
         # [b, seq_len] -> [b, 1, seq_len] -> [b, seq_len, seq_len] -> [b*num_heads, seq_len, seq_len]
         mask = mask.unsqueeze(1).expand(-1, seq_len, -1).repeat(self.num_heads, 1, 1)    
         attn = torch.bmm(Q, K.transpose(1, 2)) * self.scaling # [b * num_heads, seq_len, seq_len]
-        attn = maskout_padding(attn, mask)
+        attn = mask_logits(attn, mask)
         attn = self.dropout(F.softmax(attn, dim=-1))
         attn = torch.bmm(attn, V) # [b * num_heads, seq_len, d_k]
         attn = attn.view(self.num_heads, b, seq_len, self.d_k).permute(1, 2, 0, 3).contiguous().view(b, seq_len, model_dim)
@@ -180,7 +269,8 @@ class QANetEncoderBlock(nn.Module):
         self.pos_enc = PositionEncoder(d, max_length)
         self.conv_re = nn.ModuleList([DepthWiseSeparableConv(d, d, kernel_size=kernel_size, dim=1) for _ in range(num_conv)])
         self.layernorm_re = nn.ModuleList([nn.LayerNorm(d) for _ in range(num_conv)])
-        self.att = MultiHeadAttention(d, num_heads=num_heads, dropout_prob=layer_dropout)
+        # self.att = MultiHeadAttention(d, num_heads=num_heads, dropout_prob=layer_dropout)
+        self.att = SelfAttention(d, num_heads, dropout=layer_dropout) # TODO: change to use self attention
         self.layernorm2 = nn.LayerNorm(d)
         self.layernorm3 = nn.LayerNorm(d)
         self.fc = nn.Linear(in_features=d, out_features=d)
