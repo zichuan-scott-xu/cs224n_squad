@@ -147,9 +147,9 @@ class SelfAttention(nn.Module):
         memory = memory.transpose(1, 2)
         query = query.transpose(1, 2)
         Q = self.split_last_dim(query, self.num_head)
-        K, V = [self.split_last_dim(tensor, self.num_head) for tensor in torch.split(memory, self.d_model, dim=2)]
+        K, V = [self.split_last_dim(tensor, self.num_head) for tensor in torch.split(memory, self.model_dim, dim=2)]
 
-        key_depth_per_head = self.d_model // self.num_head
+        key_depth_per_head = self.model_dim // self.num_head
         Q *= key_depth_per_head ** (-0.5)
         x = self.dot_product_attention(Q, K, V, mask = mask)
         return self.combine_last_two_dim(x.permute(0, 2, 1, 3)).transpose(1, 2)
