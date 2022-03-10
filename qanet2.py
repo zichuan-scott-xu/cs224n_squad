@@ -242,7 +242,7 @@ class QANetEncoderBlock(nn.Module):
         self.norm_2 = nn.LayerNorm(d)
         self.conv_num = num_conv
         self.dropout = layer_dropout
-        self.pos = PositionEncoder(max_length)
+        self.pos = PositionEncoder(d, max_length)
 
     def forward(self, x, mask):
         total_layers = (self.conv_num + 1)
