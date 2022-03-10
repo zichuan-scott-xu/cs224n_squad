@@ -314,8 +314,8 @@ class QANetDecoder(nn.Module):
         X2 = torch.cat([M0, M2], dim=1)
         Y1 = torch.matmul(self.W1, X1)
         Y2 = torch.matmul(self.W2, X2)
-        Y1 = maskout_padding(Y1, mask)
-        Y2 = maskout_padding(Y2, mask)
+        Y1 = mask_logits(Y1, mask)
+        Y2 = mask_logits(Y2, mask)
         p1 = F.log_softmax(Y1, dim=1)
         p2 = F.log_softmax(Y2, dim=1)
         return p1, p2
