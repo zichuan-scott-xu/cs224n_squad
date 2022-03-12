@@ -18,8 +18,7 @@ import math
 from args import get_train_args
 from collections import OrderedDict
 from json import dumps
-# from qanet2 import QANet
-from qanet_sample import QANet
+from qanet2 import QANet
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 from ujson import load as json_load
@@ -49,20 +48,11 @@ def main(args):
 
     # Get model
     log.info('Building model...')
-    # model = QANet(word_vectors=word_vectors,
-    #               char_vectors=char_vectors,
-    #               model_dim=args.qanet_hidden,
-    #               num_heads=args.num_heads)
-    model = QANet(word_mat=word_vectors, 
-                  char_mat=char_vectors,
-                  c_max_len=400,
-                  q_max_len=50,
-                  d_model=args.qanet_hidden,
-                  num_enc_blocks=args.num_enc_blocks,
-                  train_cemb=True,
-                  pad=0,
-                  dropout=0.1,
-                  num_head=args.num_heads)
+    model = QANet(word_vectors=word_vectors,
+                char_vectors=char_vectors,
+                model_dim=args.qanet_hidden,
+                num_model_enc_block=args.num_enc_blocks,
+                num_heads=args.num_heads)
     model = nn.DataParallel(model, args.gpu_ids)
     if args.load_path:
         log.info(f'Loading checkpoint from {args.load_path}...')

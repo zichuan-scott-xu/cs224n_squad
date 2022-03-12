@@ -2,7 +2,7 @@
 Debug scripts to test the coattention model
 '''
 
-from qanet import QANet
+from qanet2 import QANet
 from util import SQuAD, collate_fn, torch_from_json
 import torch.utils.data as data
 import torch.nn.functional as F
@@ -21,8 +21,9 @@ print('Building model...')
 #               char_mat=char_vectors)
 model = QANet(word_vectors=word_vectors,
               char_vectors=char_vectors,
-              model_dim=args.qanet_dim,
-              num_model_enc_block=args.num_enc_blocks) # TODO: add this in to args
+              model_dim=args.qanet_hidden,
+              num_model_enc_block=args.num_enc_blocks,
+              num_heads=args.num_heads)
 
 print('Building dataset...')
 train_dataset = SQuAD(args.train_record_file, args.use_squad_v2)

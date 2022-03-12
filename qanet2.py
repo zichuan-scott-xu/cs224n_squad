@@ -1,38 +1,52 @@
+import math
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
-import math
+from torch.autograd import Variable
 
 
-def mask_logits(x, mask):
-    return x * mask + (-1e30) * (1 - mask)
+def mask_logits(target, mask):
+    mask = mask.type(torch.float32)
+    return target * mask + (1 - mask) * (-1e30)
 
-class DepthWiseSeparableConv(nn.Module):
-    """DepthWise Seperable Convolutional Network Based on the paper and 
-    repo and implementation from 
-    https://github.com/heliumsea/QANet-pytorch/blob/master/models.py.
-    """
-    def __init__(self, in_channels, out_channels, kernel_size, dim=1):
+'''
+    Modified based on BangLiu's and Heliumsea's implementations
+'''
+class DepthwiseSeparableConv(nn.Module):
+    def __init__(self, in_ch, out_ch, k, bias=True):
         super().__init__()
-        if dim == 1:
-            self.depthwise_conv = nn.Conv1d(in_channels=in_channels, out_channels=in_channels, kernel_size=kernel_size, 
-                                            groups=in_channels, padding=kernel_size // 2)
-            self.pointwise_conv = nn.Conv1d(in_channels=in_channels, out_channels=out_channels, kernel_size=1, padding=0)
-        elif dim == 2:
-            self.depthwise_conv = nn.Conv2d(in_channels=in_channels, out_channels=in_channels, kernel_size=kernel_size, 
-                                            groups=in_channels, padding=kernel_size // 2)
-            self.pointwise_conv = nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=1, padding=0)
-        nn.init.kaiming_normal_(self.depthwise_conv.weight)
-        nn.init.constant_(self.depthwise_conv.bias, 0.0)
-        nn.init.kaiming_normal_(self.depthwise_conv.weight)
-        nn.init.constant_(self.pointwise_conv.bias, 0.0)
+        self.depthwise_conv = nn.Conv1d(in_channels=in_ch, out_channels=in_ch, kernel_size=k, groups=in_ch, padding=k // 2, bias=False)
+        self.pointwise_conv = nn.Conv1d(in_channels=in_ch, out_channels=out_ch, kernel_size=1, padding=0, bias=bias)
+    def forward(self, x):
+        return F.relu(self.pointwise_conv(self.depthwise_conv(x)))
+
+
+'''
+Adopted from BangLiu's implementation of QANet.
+'''
+class Initialized_Conv1d(nn.Module):
+    def __init__(self, in_channels, out_channels,
+                 kernel_size=1, stride=1, padding=0, groups=1,
+                 relu=False, bias=False):
+        super().__init__()
+        self.out = nn.Conv1d(
+            in_channels, out_channels,
+            kernel_size, stride=stride,
+            padding=padding, groups=groups, bias=bias)
+        if relu is True:
+            self.relu = True
+            nn.init.kaiming_normal_(self.out.weight, nonlinearity='relu')
+        else:
+            self.relu = False
+            nn.init.xavier_uniform_(self.out.weight)
 
     def forward(self, x):
-        return self.pointwise_conv(self.depthwise_conv(x))
+        if self.relu is True:
+            return F.relu(self.out(x))
+        else:
+            return self.out(x)
 
-
-# NEW!
 class HighwayEncoder(nn.Module):
     def __init__(self, num_layers, hidden_size):
         super().__init__()
@@ -41,7 +55,6 @@ class HighwayEncoder(nn.Module):
         self.gate = nn.ModuleList([Initialized_Conv1d(hidden_size, hidden_size, bias=True) for _ in range(num_layers)])
 
     def forward(self, x):
-        #x: shape [batch_size, hidden_size, length]
         dropout = 0.1
         for i in range(self.num_layers):
             gate = F.sigmoid(self.gate[i](x))
@@ -51,10 +64,11 @@ class HighwayEncoder(nn.Module):
         return x
 
 class Embedding(nn.Module):
-    def __init__(self, word_dim, char_dim, drop_prob_word=0.1, drop_prob_char=0.05):
+    def __init__(self, word_dim, char_dim, model_dim, drop_prob_word=0.1, drop_prob_char=0.05):
         super().__init__()
-        self.conv2d = DepthWiseSeparableConv(char_dim, char_dim, 5, dim=2)
-        self.highway = HighwayEncoder(2, word_dim + char_dim)
+        self.conv_char = nn.Conv2d(char_dim, model_dim, kernel_size = (1,5), padding=0, bias=True)
+        self.conv_emb = Initialized_Conv1d(word_dim + model_dim, model_dim, bias=False)
+        self.highway = HighwayEncoder(2, model_dim)
         self.drop_prob_word = drop_prob_word
         self.drop_prob_char = drop_prob_char
 
@@ -64,12 +78,133 @@ class Embedding(nn.Module):
 
         ch_emb = ch_emb.permute(0, 3, 1, 2) # [b, char_dim, cq_len, char_limit]
         ch_emb = F.dropout(ch_emb, p=self.drop_prob_char, training=self.training)
-        ch_emb = self.conv2d(ch_emb) # [b, char_dim, cq_len, char_limit]
+        ch_emb = self.conv_char(ch_emb) # [b, char_dim, cq_len, char_limit]
         ch_emb = F.relu(ch_emb) # [b, char_dim, cq_len, char_limit]
         ch_emb, _ = torch.max(ch_emb, -1)  # [b, char_dim, cq_len]
+
         emb = torch.cat([ch_emb, wd_emb], dim=1) # [b, word_dim + char_dim, cq_len]
+        emb = self.conv_emb(emb)
         emb = self.highway(emb) # [b, word_dim + char_dim, cq_len]
         return emb
+
+'''
+Adopted from BangLiu's implementation of Positional Encoder.
+'''
+def PosEncoder(x, min_timescale=1.0, max_timescale=1.0e4):
+    x = x.transpose(1, 2)
+    length = x.size()[1]
+    channels = x.size()[2]
+    signal = get_timing_signal(length, channels, min_timescale, max_timescale)
+    if x.get_device() < 0:
+        return (x + signal.to('cpu')).transpose(1,2)
+    else:
+        return (x + signal.to(x.get_device())).transpose(1,2)
+
+
+def get_timing_signal(length, channels,
+                      min_timescale=1.0, max_timescale=1.0e4):
+    position = torch.arange(length).type(torch.float32)
+    num_timescales = channels // 2
+    log_timescale_increment = (math.log(float(max_timescale) / float(min_timescale)) / (float(num_timescales) - 1))
+    inv_timescales = min_timescale * torch.exp(
+            torch.arange(num_timescales).type(torch.float32) * -log_timescale_increment)
+    scaled_time = position.unsqueeze(1) * inv_timescales.unsqueeze(0)
+    signal = torch.cat([torch.sin(scaled_time), torch.cos(scaled_time)], dim = 1)
+    m = nn.ZeroPad2d((0, (channels % 2), 0, 0))
+    signal = m(signal)
+    signal = signal.view(1, length, channels)
+    return signal
+
+
+class SelfAttention(nn.Module):
+    def __init__(self, model_dim, num_heads, dropout):
+        super().__init__()
+        self.model_dim = model_dim
+        self.num_heads = num_heads
+        self.dropout = dropout
+        self.mem_conv = Initialized_Conv1d(in_channels=model_dim, out_channels=model_dim*2, kernel_size=1, relu=False, bias=False)
+        self.query_conv = Initialized_Conv1d(in_channels=model_dim, out_channels=model_dim, kernel_size=1, relu=False, bias=False)
+
+    def forward(self, x, mask):
+        b, model_dim, seq_len = x.size() # [b, model_dim, seq_len] 
+
+        memory = x
+        memory = self.mem_conv(memory)  # [b, 2 * model_dim, seq_len]
+        memory = memory.transpose(1, 2) # [b, seq_len, 2 * model_dim]
+        x = self.query_conv(x)      # [b, model_dim, seq_len]
+        Q = x.transpose(1, 2).view(b, seq_len, self.num_heads, model_dim // self.num_heads)   # [b, seq_len, num_h, model_dim // num_h]
+        Q = Q.permute(0, 2, 1, 3) # [b, num_heads, seq_len, model_dim // num_h]
+        K, V = [x.view(b, seq_len, self.num_heads, model_dim // self.num_heads).permute(0,2,1,3) for x in torch.split(memory, self.model_dim, dim=2)]
+        # [b, num_heads, seq_len, model_dim // num_h]
+
+        Q = Q * (self.model_dim // self.num_heads) ** -0.5
+
+        logits = torch.matmul(Q, K.permute(0,1,3,2)) # [b, num_heads, seq_len, seq_len]
+        mask = mask.view(b, 1, 1, seq_len)
+        logits = mask_logits(logits, mask)
+        alpha = F.softmax(logits, dim=-1) # [b, num_heads, seq_len, seq_len]
+        alpha = F.dropout(alpha, p=self.dropout, training=self.training)
+        attn = torch.matmul(alpha, V) # [b, num_heads, seq_len, model_dim // num_h]
+        attn = attn.permute(0,2,1,3) # [b, seq_len, num_heads, model_dim // num_h]
+        attn = attn.reshape(b, seq_len, model_dim).transpose(1,2) # [b, model_dim, seq_len]
+        
+        return attn
+    
+
+class QANetEncoderBlock(nn.Module):
+    def __init__(self, model_dim, max_length=400, num_conv=4, kernel_size=7, num_heads=1, layer_dropout=0.1):
+        super().__init__()
+        self.num_conv = num_conv
+        self.dropout = layer_dropout
+        self.conv_re = nn.ModuleList([DepthwiseSeparableConv(model_dim, model_dim, k=kernel_size) for _ in range(num_conv)])
+        self.layernorm_re = nn.ModuleList([nn.LayerNorm(model_dim) for _ in range(num_conv)])
+        # self.att = MultiHeadAttention(d, num_heads=num_heads, dropout_prob=layer_dropout)
+        self.att = SelfAttention(model_dim, num_heads, dropout=layer_dropout)
+
+        # Layernorms after convolutional blocks
+        self.layernorm2 = nn.LayerNorm(model_dim)
+        self.layernorm3 = nn.LayerNorm(model_dim)
+
+        # feedfoward layer after attentions
+        self.ff1 = Initialized_Conv1d(model_dim, model_dim, relu=True, bias=True)
+        self.ff2 = Initialized_Conv1d(model_dim, model_dim, bias=True)
+        
+
+    def forward(self, x, mask, l, blks):
+        total_layers = (self.num_conv + 1) * blks
+        out = PosEncoder(x) # [b, model_dim, seq_len]
+        for i, conv in enumerate(self.conv_re):
+            res = out
+            out = self.layernorm_re[i](out.transpose(1,2)).transpose(1,2)
+            if i % 2 == 0:
+                out = F.dropout(out, p=self.dropout, training=self.training)
+            out = conv(out)
+            out = self.layer_dropout(out, res, self.dropout * float(l) / total_layers)
+            l += 1
+        res = out
+        out = self.layernorm2(out.transpose(1,2)).transpose(1,2)
+        out = F.dropout(out, p=self.dropout, training=self.training)
+        out = self.att(out, mask) # [b, model_dim, seq_len]
+        out = self.layer_dropout(out, res, self.dropout*float(l) / total_layers)
+        l += 1
+        res = out
+
+        out = self.layernorm3(out.transpose(1,2)).transpose(1,2)
+        out = F.dropout(out, p=self.dropout, training=self.training)
+        out = self.ff2(self.ff1(out))
+        out = self.layer_dropout(out, res, self.dropout * float(l) / total_layers)
+        return out
+
+
+    def layer_dropout(self, inputs, residual, dropout):
+            if self.training == True:
+                pred = torch.empty(1).uniform_(0,1) < dropout
+                if pred:
+                    return residual
+                else:
+                    return F.dropout(inputs, dropout, training=self.training) + residual
+            else:
+                return inputs + residual
 
 
 class CoAttention(nn.Module):
@@ -104,185 +239,6 @@ class CoAttention(nn.Module):
         out = self.resizer(out)
         return out
 
-
-class Initialized_Conv1d(nn.Module):
-    def __init__(self, in_channels, out_channels,
-                 kernel_size=1, stride=1, padding=0, groups=1,
-                 relu=False, bias=False):
-        super().__init__()
-        self.out = nn.Conv1d(
-            in_channels, out_channels,
-            kernel_size, stride=stride,
-            padding=padding, groups=groups, bias=bias)
-        if relu is True:
-            self.relu = True
-            nn.init.kaiming_normal_(self.out.weight, nonlinearity='relu')
-        else:
-            self.relu = False
-            nn.init.xavier_uniform_(self.out.weight)
-
-    def forward(self, x):
-        if self.relu is True:
-            return F.relu(self.out(x))
-        else:
-            return self.out(x)
-
-
-# TODO: modify the code for self attention
-class SelfAttention(nn.Module):
-    def __init__(self, model_dim, num_head, dropout):
-        super().__init__()
-        self.model_dim = model_dim
-        self.num_head = num_head
-        self.dropout = dropout
-        self.mem_conv = Initialized_Conv1d(in_channels=model_dim, out_channels=model_dim*2, kernel_size=1, relu=False, bias=False)
-        self.query_conv = Initialized_Conv1d(in_channels=model_dim, out_channels=model_dim, kernel_size=1, relu=False, bias=False)
-        bias = torch.empty(1)
-        nn.init.constant_(bias, 0)
-        self.bias = nn.Parameter(bias)
-
-    def forward(self, queries, mask):
-        memory = queries
-        memory = self.mem_conv(memory)
-        query = self.query_conv(queries)
-        memory = memory.transpose(1, 2)
-        query = query.transpose(1, 2)
-        Q = self.split_last_dim(query, self.num_head)
-        K, V = [self.split_last_dim(tensor, self.num_head) for tensor in torch.split(memory, self.model_dim, dim=2)]
-
-        key_depth_per_head = self.model_dim // self.num_head
-        Q *= key_depth_per_head ** (-0.5)
-        x = self.dot_product_attention(Q, K, V, mask = mask)
-        return self.combine_last_two_dim(x.permute(0, 2, 1, 3)).transpose(1, 2)
-
-    def dot_product_attention(self, q, k ,v, bias = False, mask = None):
-        """dot-product attention.
-        Args:
-        q: a Tensor with shape [batch, heads, length_q, depth_k]
-        k: a Tensor with shape [batch, heads, length_kv, depth_k]
-        v: a Tensor with shape [batch, heads, length_kv, depth_v]
-        bias: bias Tensor (see attention_bias())
-        is_training: a bool of training
-        scope: an optional string
-        Returns:
-        A Tensor.
-        """
-        logits = torch.matmul(q,k.permute(0,1,3,2))
-        if bias:
-            logits += self.bias
-        if mask is not None:
-            shapes = [x  if x != None else -1 for x in list(logits.size())]
-            mask = mask.view(shapes[0], 1, 1, shapes[-1])
-            logits = mask_logits(logits, mask)
-        weights = F.softmax(logits, dim=-1)
-        # dropping out the attention links for each of the heads
-        weights = F.dropout(weights, p=self.dropout, training=self.training)
-        return torch.matmul(weights, v)
-
-    def split_last_dim(self, x, n):
-        """Reshape x so that the last dimension becomes two dimensions.
-        The first of these two dimensions is n.
-        Args:
-        x: a Tensor with shape [..., m]
-        n: an integer.
-        Returns:
-        a Tensor with shape [..., n, m/n]
-        """
-        old_shape = list(x.size())
-        last = old_shape[-1]
-        new_shape = old_shape[:-1] + [n] + [last // n if last else None]
-        ret = x.view(new_shape)
-        return ret.permute(0, 2, 1, 3)
-
-    def combine_last_two_dim(self, x):
-        """Reshape x so that the last two dimension become one.
-        Args:
-        x: a Tensor with shape [..., a, b]
-        Returns:
-        a Tensor with shape [..., ab]
-        """
-        old_shape = list(x.size())
-        a, b = old_shape[-2:]
-        new_shape = old_shape[:-2] + [a * b if a and b else None]
-        ret = x.contiguous().view(new_shape)
-        return ret
-
-
-
-class PositionEncoder(nn.Module):
-    def __init__(self, model_dim, length):
-        super().__init__()
-        # PE[pos, 2i] = sin(pos/10000^{2i/model_dim})
-        # PE[pos, 2i+1] = cos(pos/10000^{2i/model_dim})
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        self.PE = torch.empty((model_dim, length + 1)).to(self.device)
-        for pos in range(model_dim):
-            for j in range(length + 1):
-                if j % 2 == 0:
-                    self.PE[pos, j] = np.sin(pos/10000**(j/model_dim))
-                else:
-                    self.PE[pos, j] = np.sin(pos/10000**((j-1)/model_dim))
-
-    def forward(self, x):
-        seq_len = x.shape[2]
-        return x + (self.PE[:, :seq_len]) # [b, model_dim, seq_len]
-
-
-# NEW!
-class QANetEncoderBlock(nn.Module):
-    def __init__(self, d, max_length=400, num_conv=4, kernel_size=7, num_heads=1, layer_dropout=0.1):
-    # def __init__(self, conv_num, d_model, num_head, k, dropout=0.1):
-        super().__init__()
-        self.convs = nn.ModuleList([DepthWiseSeparableConv(d, d, kernel_size) for _ in range(num_conv)])
-        self.self_att = SelfAttention(d, num_heads, dropout=layer_dropout)
-        self.FFN_1 = Initialized_Conv1d(d, d, relu=True, bias=True)
-        self.FFN_2 = Initialized_Conv1d(d, d, bias=True)
-        self.norm_C = nn.ModuleList([nn.LayerNorm(d) for _ in range(num_conv)])
-        self.norm_1 = nn.LayerNorm(d)
-        self.norm_2 = nn.LayerNorm(d)
-        self.conv_num = num_conv
-        self.dropout = layer_dropout
-        self.pos = PositionEncoder(d, max_length)
-
-    def forward(self, x, mask):
-        total_layers = (self.conv_num + 1)
-        dropout = self.dropout
-        out = self.pos(x)
-        l = 1
-        for i, conv in enumerate(self.convs):
-            res = out
-            out = self.norm_C[i](out.transpose(1,2)).transpose(1,2)
-            if (i) % 2 == 0:
-                out = F.dropout(out, p=dropout, training=self.training)
-            out = conv(out)
-            out = self.layer_dropout(out, res, dropout/total_layers)
-            l += 1
-        res = out
-        out = self.norm_1(out.transpose(1,2)).transpose(1,2)
-        out = F.dropout(out, p=dropout, training=self.training)
-        out = self.self_att(out, mask)
-        out = self.layer_dropout(out, res, dropout/total_layers)
-        l += 1
-        res = out
-
-        out = self.norm_2(out.transpose(1,2)).transpose(1,2)
-        out = F.dropout(out, p=dropout, training=self.training)
-        out = self.FFN_1(out)
-        out = self.FFN_2(out)
-        out = self.layer_dropout(out, res, dropout*float(l)/total_layers)
-        return out
-
-    def layer_dropout(self, inputs, residual, dropout):
-        if self.training == True:
-            pred = torch.empty(1).uniform_(0,1) < dropout
-            if pred:
-                return residual
-            else:
-                return F.dropout(inputs, dropout, training=self.training) + residual
-        else:
-            return inputs + residual
-
-
 class QANetDecoder(nn.Module):
     def __init__(self, model_dim):
         super().__init__()
@@ -306,14 +262,14 @@ class QANet(nn.Module):
         # ------ Layers -------
         self.char_emb = nn.Embedding.from_pretrained(torch.Tensor(char_vectors))
         self.word_emb = nn.Embedding.from_pretrained(torch.Tensor(word_vectors))
-        self.emb = Embedding(self.word_dim, self.char_dim)
-        self.c_emb_conv = DepthWiseSeparableConv(self.word_dim + self.char_dim, model_dim, 5)
-        self.q_emb_conv = DepthWiseSeparableConv(self.word_dim + self.char_dim, model_dim, 5)
-        self.c_emb_encoder = QANetEncoderBlock(d=model_dim, num_heads=num_heads, max_length=400)
-        self.q_emb_encoder = QANetEncoderBlock(d=model_dim, num_heads=num_heads, max_length=50)
+        self.emb = Embedding(self.word_dim, self.char_dim, model_dim)
+        self.c_emb_encoder = QANetEncoderBlock(model_dim=model_dim, num_heads=num_heads, kernel_size=7, max_length=400)
+        self.q_emb_encoder = QANetEncoderBlock(model_dim=model_dim, num_heads=num_heads, kernel_size=7, max_length=50)
         self.coattention = CoAttention(model_dim, dropout_prob=layer_dropout)
-        self.model_encs = nn.ModuleList([QANetEncoderBlock(d=model_dim, num_heads=num_heads, max_length=400, num_conv=2, kernel_size=5)] * num_model_enc_block)
+        self.model_encs = nn.ModuleList([QANetEncoderBlock(num_conv=2, model_dim=model_dim, num_heads=num_heads, kernel_size=5, layer_dropout=0.1) for _ in range(num_model_enc_block)])
+        self.num_model_enc_block = 5
         self.decoder = QANetDecoder(model_dim)
+        self.dropout = layer_dropout
 
     def forward(self, cw_idxs, cc_idxs, qw_idxs, qc_idxs):
         c_mask = (torch.zeros_like(cw_idxs) != cw_idxs).float() # 1 if nonzero
@@ -323,24 +279,24 @@ class QANet(nn.Module):
 
         ## Embedding phase
         # char_limit = maximum character kept from a word
-        Cc = self.char_emb(cc_idxs) # [b, 246, 16, 64] = [b, c_len, char_limit, char_dim]
-        Qc = self.char_emb(qc_idxs) # [b, 23, 16, 64]  = [b, q_len, char_limit, char_dim]
-        C = self.emb(Cc, Cw) # [b, word_dim+char_dim, c_len]#
-        Q = self.emb(Qc, Qw) # [b, word_dim+char_dim, q_len]
-        C = self.c_emb_conv(C) # [b, model_dim, c_len]
-        Q = self.q_emb_conv(Q) # [b, model_dim, q_len]
+        Cc = self.char_emb(cc_idxs) 
+        Qc = self.char_emb(qc_idxs) 
+        C = self.emb(Cc, Cw) 
+        Q = self.emb(Qc, Qw) 
 
         ## Encoding phase
-        C = self.c_emb_encoder(C, c_mask)
-        Q = self.q_emb_encoder(Q, q_mask)
+        C = self.c_emb_encoder(C, c_mask, l=1, blks=1)
+        Q = self.q_emb_encoder(Q, q_mask, l=1, blks=1)
         M0 = self.coattention(C, Q, c_mask, q_mask)
-        for model_enc in self.model_encs:
-            M0 = model_enc(M0, c_mask)
+        for i, model_enc in enumerate(self.model_encs):
+            M0 = model_enc(M0, c_mask, l=4*i+1, blks=self.num_model_enc_block)
         M1 = M0
-        for model_enc in self.model_encs:
-            M1 = model_enc(M1, c_mask)
-        M2 = M1
-        for model_enc in self.model_encs:
-            M2 = model_enc(M2, c_mask)
-        log_p1, log_p2 = self.decoder(M0, M1, M2, c_mask)
+        for i, model_enc in enumerate(self.model_encs):
+            M0 = model_enc(M0, c_mask, l=4*i+1, blks=self.num_model_enc_block)
+        M2 = M0
+        M0 = F.dropout(M0, p=self.dropout, training=self.training)
+        for i, model_enc in enumerate(self.model_encs):
+            M0 = model_enc(M0, c_mask, l=4*i+1, blks=self.num_model_enc_block)
+        M3 = M0
+        log_p1, log_p2 = self.decoder(M1, M2, M3, c_mask)
         return log_p1, log_p2

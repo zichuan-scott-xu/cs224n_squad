@@ -249,7 +249,7 @@ def add_train_test_args(parser):
     # QANET
     parser.add_argument('--qanet_hidden',
                         type=int,
-                        default=64, # the default paper use 128
+                        default=128, # the default paper use 128
                         help='Hidden layer dimension in QANet model')
     parser.add_argument('--start_lr',
                         type=float,
@@ -265,5 +265,5 @@ def add_train_test_args(parser):
                         help='Number of encoder block')
     parser.add_argument('--num_heads',
                         type=int,
-                        default=1, # the default paper use 8
+                        default=8, # the default paper use 8
                         help='Number of heads in multihead attention')
