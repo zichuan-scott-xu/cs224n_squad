@@ -22,7 +22,7 @@ from args import get_test_args
 from collections import OrderedDict
 from json import dumps
 # from models import CoAttention
-from qanet_sample import QANet
+from qanet2 import QANet
 from os.path import join
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
@@ -47,16 +47,11 @@ def main(args):
     log.info('Building model...')
     # model = BiDAF(word_vectors=word_vectors,
     #               hidden_size=args.hidden_size)
-    model = QANet(word_mat=word_vectors, 
-                  char_mat=char_vectors,
-                  c_max_len=400,
-                  q_max_len=50,
-                  d_model=args.qanet_hidden,
-                  num_enc_blocks=args.num_enc_blocks,
-                  train_cemb=True,
-                  pad=0,
-                  dropout=0.1,
-                  num_head=args.num_heads)
+    model = QANet(word_vectors=word_vectors,
+                char_vectors=char_vectors,
+                model_dim=args.qanet_hidden,
+                num_model_enc_block=args.num_enc_blocks,
+                num_heads=args.num_heads)
     model = nn.DataParallel(model, gpu_ids)
     log.info(f'Loading checkpoint from {args.load_path}...')
     model = util.load_model(model, args.load_path, gpu_ids, return_step=False)
