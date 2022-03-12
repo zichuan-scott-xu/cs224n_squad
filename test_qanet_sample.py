@@ -22,7 +22,7 @@ from args import get_test_args
 from collections import OrderedDict
 from json import dumps
 # from models import CoAttention
-from qanet2 import QANet
+from qanet_sample import QANet
 from os.path import join
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
