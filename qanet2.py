@@ -231,6 +231,7 @@ class CoAttention(nn.Module):
         nn.init.constant_(bias, 0)
         self.bias = nn.Parameter(bias)
         self.dropout = dropout_prob
+        self.resizer = Initialized_Conv1d(model_dim * 4, model_dim)
 
     def forward(self, C, Q, c_mask, q_mask):
         # c_len, q_len = C.size(2), Q.size(2)
@@ -265,15 +266,17 @@ class CoAttention(nn.Module):
         A = torch.bmm(S1, Q)
         B = torch.bmm(torch.bmm(S1, S2.transpose(1, 2)), C)
         out = torch.cat([C, A, torch.mul(C, A), torch.mul(C, B)], dim=2)
-        return out.transpose(1, 2)
+        out = out.transpose(1, 2)
+        out = self.resizer(out)
+        return out
 
     '''
     Adopted from BangLiu's implementation. We test over our own implementation and BangLiu's implementation 
     and found similar performance. 
     '''
     def trilinear_for_attention(self, C, Q):
-        batch_size, Lc, d_model = C.shape
-        batch_size, Lq, d_model = Q.shape
+        batch_size, Lc, model_dim = C.shape
+        batch_size, Lq, model_dim = Q.shape
         dropout = self.dropout
         C = F.dropout(C, p=dropout, training=self.training)
         Q = F.dropout(Q, p=dropout, training=self.training)
