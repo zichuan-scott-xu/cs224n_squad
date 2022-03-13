@@ -210,34 +210,79 @@ class QANetEncoderBlock(nn.Module):
 class CoAttention(nn.Module):
     def __init__(self, model_dim, dropout_prob):
         super().__init__()
-        self.model_dim = model_dim
-        self.dropout_prob = dropout_prob
-        W0 = torch.empty(3 * model_dim)
-        nn.init.uniform_(W0, -1 / math.sqrt(model_dim), 1 / math.sqrt(model_dim))
-        self.W0 = nn.Parameter(W0)
-        # self.resizer = DepthWiseSeparableConv(model_dim * 4, model_dim, 5)
-        self.resizer = Initialized_Conv1d(model_dim * 4, model_dim)
+        # self.model_dim = model_dim
+        # self.dropout_prob = dropout_prob
+        # W0 = torch.empty(3 * model_dim)
+        # nn.init.uniform_(W0, -1 / math.sqrt(model_dim), 1 / math.sqrt(model_dim))
+        # self.W0 = nn.Parameter(W0)
+        # # self.resizer = DepthWiseSeparableConv(model_dim * 4, model_dim, 5)
+        # self.resizer = Initialized_Conv1d(model_dim * 4, model_dim)
+        w4C = torch.empty(model_dim, 1)
+        w4Q = torch.empty(model_dim, 1)
+        w4mlu = torch.empty(1, 1, model_dim)
+        nn.init.xavier_uniform_(w4C)
+        nn.init.xavier_uniform_(w4Q)
+        nn.init.xavier_uniform_(w4mlu)
+        self.w4C = nn.Parameter(w4C)
+        self.w4Q = nn.Parameter(w4Q)
+        self.w4mlu = nn.Parameter(w4mlu)
+
+        bias = torch.empty(1)
+        nn.init.constant_(bias, 0)
+        self.bias = nn.Parameter(bias)
+        self.dropout = dropout_prob
 
     def forward(self, C, Q, c_mask, q_mask):
-        c_len, q_len = C.size(2), Q.size(2)
-        C_t = C.transpose(1, 2) # [b, c_len, model_dim]
-        Q_t = Q.transpose(1, 2) # [b, q_len, model_dim]
-        C = C_t.unsqueeze(2).expand(-1, -1, q_len, -1) # [b, c_len, model_dim] -> [b, c_len, q_len, model_dim]
-        Q = Q_t.unsqueeze(1).expand(-1, c_len, -1, -1) # [b, q_len, model_dim] -> [b, c_len, q_len, model_dim]
-        c_mask = c_mask.unsqueeze(-1)# [b, c_len, 1]
-        q_mask = q_mask.unsqueeze(1) # [b, 1, q_len]
-        C_Q = torch.mul(C, Q)
-        S = torch.cat([C, Q, C_Q], dim=3) # [b, c_len, q_len, 3 * model_dim]
-        S = torch.matmul(S, self.W0) # [b, c_len, q_len]
-        S_bar = F.softmax(mask_logits(S, q_mask), dim=2) # [b, c_len, q_len]
-        S_bbar = F.softmax(mask_logits(S, c_mask), dim=1) #[b, c_len, q_len]
-        A = torch.bmm(S_bar, Q_t) # [b, c_len, model_dim] 
-        B = torch.bmm(torch.bmm(S_bar, S_bbar.transpose(1, 2)), C_t) # [b, c_len, model_dim] 
-        out = torch.cat([C_t, A, torch.mul(C_t, A), torch.mul(C_t, B)], dim=2) # [b, c_len, 4 * model_dim]
-        out = F.dropout(out, p=self.dropout_prob, training=self.training)
-        out = out.transpose(1,2) # [b, 4*model_dim, c_len]
-        out = self.resizer(out)
-        return out
+        # c_len, q_len = C.size(2), Q.size(2)
+        # C_t = C.transpose(1, 2) # [b, c_len, model_dim]
+        # Q_t = Q.transpose(1, 2) # [b, q_len, model_dim]
+        # C = C_t.unsqueeze(2).expand(-1, -1, q_len, -1) # [b, c_len, model_dim] -> [b, c_len, q_len, model_dim]
+        # Q = Q_t.unsqueeze(1).expand(-1, c_len, -1, -1) # [b, q_len, model_dim] -> [b, c_len, q_len, model_dim]
+        # c_mask = c_mask.unsqueeze(-1)# [b, c_len, 1]
+        # q_mask = q_mask.unsqueeze(1) # [b, 1, q_len]
+        # C_Q = torch.mul(C, Q)
+        # S = torch.cat([C, Q, C_Q], dim=3) # [b, c_len, q_len, 3 * model_dim]
+        # S = torch.matmul(S, self.W0) # [b, c_len, q_len]
+        # S_bar = F.softmax(mask_logits(S, q_mask), dim=2) # [b, c_len, q_len]
+        # S_bbar = F.softmax(mask_logits(S, c_mask), dim=1) #[b, c_len, q_len]
+        # A = torch.bmm(S_bar, Q_t) # [b, c_len, model_dim] 
+        # B = torch.bmm(torch.bmm(S_bar, S_bbar.transpose(1, 2)), C_t) # [b, c_len, model_dim] 
+        # out = torch.cat([C_t, A, torch.mul(C_t, A), torch.mul(C_t, B)], dim=2) # [b, c_len, 4 * model_dim]
+        # out = F.dropout(out, p=self.dropout_prob, training=self.training)
+        # out = out.transpose(1,2) # [b, 4*model_dim, c_len]
+        # out = self.resizer(out)
+        # return out
+        C = C.transpose(1, 2)
+        Q = Q.transpose(1, 2)
+        batch_size_c = C.size()[0]
+        batch_size, Lc, d_model = C.shape
+        batch_size, Lq, d_model = Q.shape
+        S = self.trilinear_for_attention(C, Q)
+        c_mask = c_mask.view(batch_size_c, Lc, 1)
+        q_mask = q_mask.view(batch_size_c, 1, Lq)
+        S1 = F.softmax(mask_logits(S, q_mask), dim=2)
+        S2 = F.softmax(mask_logits(S, c_mask), dim=1)
+        A = torch.bmm(S1, Q)
+        B = torch.bmm(torch.bmm(S1, S2.transpose(1, 2)), C)
+        out = torch.cat([C, A, torch.mul(C, A), torch.mul(C, B)], dim=2)
+        return out.transpose(1, 2)
+
+    '''
+    Adopted from BangLiu's implementation. We test over our own implementation and BangLiu's implementation 
+    and found similar performance. 
+    '''
+    def trilinear_for_attention(self, C, Q):
+        batch_size, Lc, d_model = C.shape
+        batch_size, Lq, d_model = Q.shape
+        dropout = self.dropout
+        C = F.dropout(C, p=dropout, training=self.training)
+        Q = F.dropout(Q, p=dropout, training=self.training)
+        subres0 = torch.matmul(C, self.w4C).expand([-1, -1, Lq])
+        subres1 = torch.matmul(Q, self.w4Q).transpose(1, 2).expand([-1, Lc, -1])
+        subres2 = torch.matmul(C * self.w4mlu, Q.transpose(1,2))
+        res = subres0 + subres1 + subres2
+        res += self.bias
+        return res
 
 class QANetDecoder(nn.Module):
     def __init__(self, model_dim):
